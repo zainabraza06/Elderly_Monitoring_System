@@ -1,2 +1,43 @@
-data/SisFall_dataset
-submission/.feature_cache
+# ── Dataset (raw, large) ─────────────────────────────────────────────────────
+data/SisFall_dataset/
+
+# ── Feature cache (hundreds of MB) ───────────────────────────────────────────
+submission/.feature_cache/
+.feature_cache/
+
+# ── Saved model files (can be multi-hundred MB) ──────────────────────────────
+submission/results/*.pkl
+*.pkl
+
+# ── Python byte-compiled / optimised / DLL files ─────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+
+# ── Virtual environment ───────────────────────────────────────────────────────
+.venv/
+venv/
+env/
+.env
+
+# ── Temporary / debug / helper scripts created during development ─────────────
+submission/splice_main.py
+submission/debug_runner.py
+submission/run_pipeline.py
+submission/_new_main_block.py
+submission/debug_log.txt
+submission/import_check.txt
+submission/dir_check.txt
+submission/check.txt
+submission/run_log*.txt
+
+# ── Jupyter Notebook checkpoints ─────────────────────────────────────────────
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# ── OS / editor artefacts ─────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.swp
+*.swo

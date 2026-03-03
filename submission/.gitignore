@@ -1,1 +1,22 @@
-data/SisFall_dataset
+# ── Inherits root .gitignore; this file adds submission-specific rules ────────
+
+# Feature cache
+.feature_cache/
+
+# Saved models
+results/*.pkl
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Temp / debug files
+splice_main.py
+debug_runner.py
+run_pipeline.py
+_new_main_block.py
+debug_log.txt
+import_check.txt
+dir_check.txt
+check.txt
+run_log*.txt
