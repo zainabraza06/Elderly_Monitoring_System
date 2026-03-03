@@ -1,0 +1,90 @@
+======================================================================
+FALL DETECTION MODEL - EXPLAINABILITY REPORT
+======================================================================
+
+TOP 20 MOST IMPORTANT FEATURES
+--------------------------------------------------
+Rank  Feature                                 Importance     
+--------------------------------------------------
+1     mean_ch1                                0.851022       
+2     jerk_mean_ch3                           0.524840       
+3     jerk_peak_ch7                           0.316531       
+4     sample_entropy_ch3                      0.243810       
+5     jerk_mean_ch4                           0.243647       
+6     max_ch3                                 0.241382       
+7     autocorr_ch2                            0.176070       
+8     iqr_ch5                                 0.173377       
+9     max_ch7                                 0.164963       
+10    mean_ch3                                0.153023       
+11    energy_ratio_ch5                        0.137742       
+12    jerk_peak_ch2                           0.134807       
+13    mean_freq_ch4                           0.129291       
+14    jerk_peak_ch0                           0.124231       
+15    jerk_std_ch3                            0.123824       
+16    jerk_peak_ch10                          0.113379       
+17    zcr_ch3                                 0.112661       
+18    sample_entropy_ch2                      0.112504       
+19    energy_ratio_ch7                        0.109609       
+20    mean_ch7                                0.106645       
+
+PHYSIOLOGICAL INTERPRETATION OF KEY FEATURES
+----------------------------------------------------------------------
+
+1. mean_ch1
+   Importance: 0.851022
+   Meaning: General motion characteristic
+
+2. jerk_mean_ch3
+   Importance: 0.524840
+   Meaning: Rate of acceleration change - higher in falls due to abrupt movements
+
+3. jerk_peak_ch7
+   Importance: 0.316531
+   Meaning: Peak acceleration - indicates sudden impact events
+
+4. sample_entropy_ch3
+   Importance: 0.243810
+   Meaning: Signal regularity - falls show irregular patterns
+
+5. jerk_mean_ch4
+   Importance: 0.243647
+   Meaning: Rate of acceleration change - higher in falls due to abrupt movements
+
+6. max_ch3
+   Importance: 0.241382
+   Meaning: General motion characteristic
+
+7. autocorr_ch2
+   Importance: 0.176070
+   Meaning: Autocorrelation - signal self-similarity
+
+8. iqr_ch5
+   Importance: 0.173377
+   Meaning: General motion characteristic
+
+9. max_ch7
+   Importance: 0.164963
+   Meaning: General motion characteristic
+
+10. mean_ch3
+   Importance: 0.153023
+   Meaning: General motion characteristic
+
+======================================================================
+KEY INSIGHTS FOR FALL DETECTION
+----------------------------------------------------------------------
+
+1. Peak Acceleration: Falls produce significantly higher peak accelerations
+   compared to normal activities due to sudden impact with ground/objects.
+
+2. Jerk Features: The rate of change of acceleration (jerk) is typically
+   much higher during falls, indicating abrupt changes in motion.
+
+3. Signal Vector Magnitude: The combined magnitude across all axes shows
+   distinct patterns during falls vs activities of daily living.
+
+4. Spectral Entropy: Falls have characteristic frequency compositions that
+   differ from regular activities, captured by spectral entropy.
+
+5. Impact Duration: True falls show specific temporal patterns of impact
+   that distinguish them from activities like sitting down quickly.
