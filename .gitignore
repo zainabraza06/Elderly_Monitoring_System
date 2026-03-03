@@ -41,3 +41,7 @@ submission/run_log*.txt
 Thumbs.db
 *.swp
 *.swo
+
+# Feature cache (large files)
+submission/.feature_cache/
+.feature_cache/
