@@ -45,3 +45,9 @@ Thumbs.db
 # Feature cache (large files)
 submission/.feature_cache/
 .feature_cache/
+
+# Large archive files
+*.rar
+submission.rar
+
+*.rar
