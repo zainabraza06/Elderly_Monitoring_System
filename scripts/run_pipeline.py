@@ -13,6 +13,17 @@ def run_cmd(cmd: list[str]) -> None:
         raise SystemExit(proc.returncode)
 
 
+def windows_artifacts_exist(base_path: Path) -> bool:
+    return (
+        base_path.with_suffix(".parquet").exists()
+        and base_path.with_stem(base_path.stem + "_signals").with_suffix(".npz").exists()
+    )
+
+
+def features_artifacts_exist(base_path: Path) -> bool:
+    return base_path.with_suffix(".parquet").exists() or base_path.with_suffix(".csv").exists()
+
+
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Run preprocessing -> feature extraction -> model training")
     p.add_argument("--data-root", type=Path, default=Path("data"))
@@ -24,14 +35,22 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+
+    if not args.data_root.exists():
+        print(f"Data root does not exist: {args.data_root}")
+        print("Create the folder and place datasets in it before running the pipeline.")
+        print("Expected directories (as available): SisFall_dataset, MobiAct_Dataset_v2.0, UCI HAR Dataset")
+        raise SystemExit(2)
+
     args.artifacts.mkdir(parents=True, exist_ok=True)
 
     windows = args.artifacts / "windows.pkl"
     features = args.artifacts / "features.pkl"
     fall_model = args.artifacts / "fall_detector.joblib"
+    fall_bundle = args.artifacts / "fall_detector_bundle.joblib"
     integration_notes = Path("results/mobile_export/integration_notes.md")
 
-    if not windows.exists():
+    if not windows_artifacts_exist(windows):
         preprocess_cmd = [
             sys.executable,
             str(Path(__file__).parent / "preprocessing.py"),
@@ -54,9 +73,9 @@ def main() -> None:
 
         run_cmd(preprocess_cmd)
     else:
-        print(f"Skipping preprocessing, {windows} already exists.")
+        print(f"Skipping preprocessing, split window artifacts for {windows} already exist.")
 
-    if not features.exists():
+    if not features_artifacts_exist(features):
         run_cmd(
             [
                 sys.executable,
@@ -70,9 +89,9 @@ def main() -> None:
             ]
         )
     else:
-        print(f"Skipping feature extraction, {features} already exists.")
+        print(f"Skipping feature extraction, feature table for {features} already exists.")
 
-    if not fall_model.exists():
+    if not fall_model.exists() or not fall_bundle.exists():
         run_cmd(
             [
                 sys.executable,
@@ -81,10 +100,16 @@ def main() -> None:
                 str(features),
                 "--output-dir",
                 str(args.artifacts),
+                "--target-fs",
+                "50",
+                "--window-sec",
+                "2.56",
+                "--overlap",
+                "0.5",
             ]
         )
     else:
-        print(f"Skipping modeling, {fall_model} already exists.")
+        print(f"Skipping modeling, {fall_model} and {fall_bundle} already exist.")
 
     if not integration_notes.exists():
         run_cmd(

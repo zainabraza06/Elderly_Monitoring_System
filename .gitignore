@@ -1,26 +1,72 @@
-# Datasets - These are large and should not be committed
+# Data and generated outputs
 /data/
-
-# Results - All generated artifacts, models, reports, and comparisons
 /results/
+/flask_backend/stress_reports/
+DETAILED_PROJECT_ANALYSIS.md
+*.log
 
-# Python Virtual Environment
+# Python virtual environments
 /.venv/
 *.venv/
-.env
+venv/
+env/
+ENV/
 
-# Python cache
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Python cache and tooling
 __pycache__/
+/.pycache_verify/
 *.py[cod]
 *$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# Python packaging artifacts
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+dist/
 
 # Jupyter Notebook checkpoints
-.ipynb_checkpoints
+.ipynb_checkpoints/
+
+# Node.js / Next.js artifacts
+**/node_modules/
+**/.next/
+**/out/
+**/.turbo/
+**/.pnpm-store/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Flutter / Dart generated files
+**/.dart_tool/
+**/.flutter-plugins
+**/.flutter-plugins-dependencies
+**/.packages
+**/build/
+
+# Build and temp directories
+.cache/
+tmp/
+temp/
 
 # OS-specific files
 .DS_Store
 Thumbs.db
 
-# IDE-specific files
+# IDE/editor files
 .vscode/
 .idea/
+*.iml

@@ -447,6 +447,14 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
 
+    if not args.data_root.exists():
+        print(f"Data root does not exist: {args.data_root}")
+        print("Expected datasets under this folder, for example:")
+        print("- SisFall_dataset")
+        print("- MobiAct_Dataset_v2.0")
+        print("- UCI HAR Dataset")
+        raise SystemExit(2)
+
     include_uci = not args.sisfall_only
     include_mobiact = not args.sisfall_only
 
@@ -460,11 +468,12 @@ def main() -> None:
         include_sisfall=True,
         max_files_per_dataset=args.max_files_per_dataset,
     )
-    save_windows(samples, args.output)
 
     if not samples:
-        print("No windows were produced. Check dataset paths.")
-        return
+        print("No windows were produced. Check dataset paths and folder names under --data-root.")
+        raise SystemExit(2)
+
+    save_windows(samples, args.output)
 
     summary = pd.DataFrame(
         {

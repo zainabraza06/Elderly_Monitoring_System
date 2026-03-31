@@ -85,11 +85,50 @@ def build_fall_model(seed: int) -> object:
     )
 
 
+def save_fall_runtime_bundle(
+    model: object,
+    feature_cols: List[str],
+    out_dir: Path,
+    target_fs: int,
+    window_sec: float,
+    overlap: float,
+) -> None:
+    window_size_samples = int(round(target_fs * window_sec))
+    step_size_samples = max(1, int(round(window_size_samples * (1.0 - overlap))))
+
+    bundle = {
+        "model": model,
+        "feature_columns": feature_cols,
+        "target_fs": target_fs,
+        "window_sec": window_sec,
+        "overlap": overlap,
+        "window_size_samples": window_size_samples,
+        "step_size_samples": step_size_samples,
+        "model_name": "fall_detector",
+    }
+    joblib.dump(bundle, out_dir / "fall_detector_bundle.joblib")
+
+    metadata = {
+        "feature_columns": feature_cols,
+        "target_fs": target_fs,
+        "window_sec": window_sec,
+        "overlap": overlap,
+        "window_size_samples": window_size_samples,
+        "step_size_samples": step_size_samples,
+        "model_name": "fall_detector",
+    }
+    with (out_dir / "fall_detector_metadata.json").open("w", encoding="utf-8") as f:
+        json.dump(metadata, f, indent=2)
+
+
 def train_fall_detector(
     df: pd.DataFrame,
     feature_cols: List[str],
     out_dir: Path,
     seed: int,
+    target_fs: int,
+    window_sec: float,
+    overlap: float,
 ) -> Dict[str, float]:
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -123,6 +162,14 @@ def train_fall_detector(
     metrics["split"] = "cross_dataset_sisfall_external" if external_mode else "group_split"
 
     joblib.dump(model, out_dir / "fall_detector.joblib")
+    save_fall_runtime_bundle(
+        model=model,
+        feature_cols=feature_cols,
+        out_dir=out_dir,
+        target_fs=target_fs,
+        window_sec=window_sec,
+        overlap=overlap,
+    )
     save_confusion_matrix(y_test, y_pred, out_dir / "fall_confusion_matrix.png", "Fall vs Non-Fall")
     if y_prob is not None and len(np.unique(y_test)) == 2:
         save_roc_curve(y_test, y_prob, out_dir / "fall_roc_curve.png", "Fall Detector ROC")
@@ -252,6 +299,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--features", type=Path, default=Path("results/artifacts/features.pkl"))
     p.add_argument("--output-dir", type=Path, default=Path("results/artifacts"))
     p.add_argument("--seed", type=int, default=42)
+    p.add_argument("--target-fs", type=int, default=50)
+    p.add_argument("--window-sec", type=float, default=2.56)
+    p.add_argument("--overlap", type=float, default=0.5)
     return p.parse_args()
 
 
@@ -269,7 +319,15 @@ def main() -> None:
 
     metrics_all: Dict[str, Dict[str, float]] = {}
 
-    fall_metrics = train_fall_detector(df, feature_cols, args.output_dir, args.seed)
+    fall_metrics = train_fall_detector(
+        df,
+        feature_cols,
+        args.output_dir,
+        args.seed,
+        args.target_fs,
+        args.window_sec,
+        args.overlap,
+    )
     metrics_all["fall_detector"] = fall_metrics
 
     loso_metrics = sisfall_loso_fall(df, feature_cols, args.output_dir, args.seed)

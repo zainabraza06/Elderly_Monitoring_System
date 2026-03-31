@@ -1,0 +1,38 @@
+name: Deploy Frontend to CapRover
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - web_frontend/**
+      - .github/workflows/deploy-frontend.yml
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Prepare captain definition
+        run: cp web_frontend/captain-definition captain-definition
+
+      - name: Create deploy archive
+        run: |
+          tar \
+            --exclude='web_frontend/node_modules' \
+            --exclude='web_frontend/.next' \
+            -cf deploy.tar \
+            captain-definition \
+            web_frontend
+
+      - name: Deploy to CapRover
+        uses: caprover/deploy-from-github@main
+        with:
+          server: ${{ secrets.CAPROVER_SERVER }}
+          app: ${{ secrets.CAPROVER_FRONTEND_APP }}
+          token: ${{ secrets.CAPROVER_FRONTEND_APP_TOKEN }}

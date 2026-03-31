@@ -1,0 +1,39 @@
+name: Deploy Backend to CapRover
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - flask_backend/**
+      - .github/workflows/deploy-backend.yml
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Prepare captain definition
+        run: cp flask_backend/captain-definition captain-definition
+
+      - name: Create deploy archive
+        run: |
+          tar \
+            --exclude='flask_backend/__pycache__' \
+            --exclude='flask_backend/app/__pycache__' \
+            --exclude='flask_backend/stress_reports' \
+            -cf deploy.tar \
+            captain-definition \
+            flask_backend
+
+      - name: Deploy to CapRover
+        uses: caprover/deploy-from-github@main
+        with:
+          server: ${{ secrets.CAPROVER_SERVER }}
+          app: ${{ secrets.CAPROVER_BACKEND_APP }}
+          token: ${{ secrets.CAPROVER_BACKEND_APP_TOKEN }}
