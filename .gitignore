@@ -1,53 +1,26 @@
-# ── Dataset (raw, large) ─────────────────────────────────────────────────────
-data/SisFall_dataset/
+# Datasets - These are large and should not be committed
+/data/
 
-# ── Feature cache (hundreds of MB) ───────────────────────────────────────────
-submission/.feature_cache/
-.feature_cache/
+# Results - All generated artifacts, models, reports, and comparisons
+/results/
 
-# ── Saved model files (can be multi-hundred MB) ──────────────────────────────
-submission/results/*.pkl
-*.pkl
+# Python Virtual Environment
+/.venv/
+*.venv/
+.env
 
-# ── Python byte-compiled / optimised / DLL files ─────────────────────────────
+# Python cache
 __pycache__/
 *.py[cod]
 *$py.class
-*.pyo
 
-# ── Virtual environment ───────────────────────────────────────────────────────
-.venv/
-venv/
-env/
-.env
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints
 
-# ── Temporary / debug / helper scripts created during development ─────────────
-submission/splice_main.py
-submission/debug_runner.py
-submission/run_pipeline.py
-submission/_new_main_block.py
-submission/debug_log.txt
-submission/import_check.txt
-submission/dir_check.txt
-submission/check.txt
-submission/run_log*.txt
-
-# ── Jupyter Notebook checkpoints ─────────────────────────────────────────────
-.ipynb_checkpoints/
-*.ipynb_checkpoints
-
-# ── OS / editor artefacts ─────────────────────────────────────────────────────
+# OS-specific files
 .DS_Store
 Thumbs.db
-*.swp
-*.swo
 
-# Feature cache (large files)
-submission/.feature_cache/
-.feature_cache/
-
-# Large archive files
-*.rar
-submission.rar
-
-*.rar
+# IDE-specific files
+.vscode/
+.idea/
