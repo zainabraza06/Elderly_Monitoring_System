@@ -1,15 +1,17 @@
 FROM node:20-alpine
 
-ENV NODE_ENV=production \
-    PORT=3000
+ENV PORT=3000
 
 WORKDIR /app/web_frontend
 
 COPY web_frontend/package.json web_frontend/package-lock.json ./
-RUN npm ci
+# Build needs devDependencies (e.g. Tailwind PostCSS plugin).
+RUN npm ci --include=dev
 
 COPY web_frontend ./
 RUN npm run build
+
+ENV NODE_ENV=production
 
 EXPOSE 3000
 
