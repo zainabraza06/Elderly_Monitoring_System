@@ -26,6 +26,14 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to view the dashboard.
 
+## CapRover note (important)
+
+If deployment builds successfully but the app does not open, verify CapRover is routing to the same port your container listens on.
+
+- This Docker image now listens on port `80` by default.
+- In CapRover app settings, `Container HTTP Port` should be `80`.
+- If you change the container `PORT`, update CapRover `Container HTTP Port` to match exactly.
+
 ## Main files
 
 - `app/page.tsx`: realtime dashboard UI

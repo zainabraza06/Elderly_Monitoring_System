@@ -64,6 +64,9 @@ class OfflineModelBundle:
     step_size_samples: int
     model_name: str
     artifact_path: str
+    met_model: object | None = None
+    met_label_encoder: object | None = None
+    proxy_regressor: object | None = None
 
 
 def clamp01(value: float) -> float:
@@ -98,6 +101,8 @@ class RealtimeDetector:
             "feature_count": len(runtime.feature_columns) if runtime is not None else 0,
             "model_name": runtime.model_name if runtime is not None else None,
             "artifact_path": runtime.artifact_path if runtime is not None else None,
+            "has_activity_classifier": runtime.met_model is not None if runtime is not None else False,
+            "has_proxy_regressor": runtime.proxy_regressor is not None if runtime is not None else False,
         }
 
     def analyze(self, payload: SensorBatchIn, config: DetectorConfig) -> DetectionResult:
@@ -287,10 +292,39 @@ class RealtimeDetector:
             self._status_reason = f"Offline detector bundle loaded but inference failed: {exc}"
             return None
 
+        predicted_activity_class: str | None = None
+        if runtime.met_model is not None:
+            try:
+                activity_prediction = runtime.met_model.predict(feature_vector)[0]
+                if runtime.met_label_encoder is not None and hasattr(runtime.met_label_encoder, "inverse_transform"):
+                    decoded = runtime.met_label_encoder.inverse_transform([int(activity_prediction)])
+                    predicted_activity_class = str(decoded[0])
+                else:
+                    predicted_activity_class = str(activity_prediction)
+            except Exception:  # pragma: no cover - depends on artifact/runtime state
+                logger.exception("Offline activity classifier inference failed.")
+
+        frailty_proxy_score: float | None = None
+        gait_stability_score: float | None = None
+        movement_disorder_score: float | None = None
+        if runtime.proxy_regressor is not None:
+            try:
+                proxy_prediction = runtime.proxy_regressor.predict(feature_vector)
+                if len(proxy_prediction) > 0:
+                    proxy_vector = proxy_prediction[0]
+                    if len(proxy_vector) >= 3:
+                        frailty_proxy_score = clamp01(float(proxy_vector[0]))
+                        gait_stability_score = clamp01(float(proxy_vector[1]))
+                        movement_disorder_score = clamp01(float(proxy_vector[2]))
+            except Exception:  # pragma: no cover - depends on artifact/runtime state
+                logger.exception("Offline proxy regressor inference failed.")
+
         severity = self._severity_from_probability(fall_probability, config)
         reasons = [
             f"Offline model fall probability is {fall_probability:.2f} for the current live window.",
         ]
+        if predicted_activity_class is not None:
+            reasons.append(f"Predicted activity intensity class is {predicted_activity_class}.")
         if motion.peak_acc_g >= config.impact_threshold_g:
             reasons.append(f"Impact peak {motion.peak_acc_g:.2f}g supports the model result.")
         if motion.peak_gyro_dps >= config.gyro_threshold_dps:
@@ -311,6 +345,12 @@ class RealtimeDetector:
             severity=severity,
             score=round(fall_probability, 4),
             fall_probability=round(fall_probability, 4),
+            predicted_activity_class=predicted_activity_class,
+            frailty_proxy_score=round(frailty_proxy_score, 4) if frailty_proxy_score is not None else None,
+            gait_stability_score=round(gait_stability_score, 4) if gait_stability_score is not None else None,
+            movement_disorder_score=round(movement_disorder_score, 4)
+            if movement_disorder_score is not None
+            else None,
             peak_acc_g=round(motion.peak_acc_g, 4),
             peak_gyro_dps=round(motion.peak_gyro_dps, 4),
             peak_jerk_g_per_s=round(motion.peak_jerk_g_per_s, 4),
@@ -331,20 +371,42 @@ class RealtimeDetector:
         return AlertSeverity.low
 
     def _artifact_signature(self) -> tuple[str, float, float] | None:
+        optional_artifacts = (
+            "met_classifier.joblib",
+            "met_label_encoder.joblib",
+            "proxy_regressor.joblib",
+        )
+
         bundle_path = self._artifacts_dir / "fall_detector_bundle.joblib"
         if bundle_path.exists():
             stat = bundle_path.stat()
-            return (str(bundle_path), stat.st_mtime, stat.st_size)
+            latest_mtime = stat.st_mtime
+            total_size = float(stat.st_size)
+            for name in optional_artifacts:
+                artifact = self._artifacts_dir / name
+                if artifact.exists():
+                    aux_stat = artifact.stat()
+                    latest_mtime = max(latest_mtime, aux_stat.st_mtime)
+                    total_size += float(aux_stat.st_size)
+            return (str(bundle_path), latest_mtime, total_size)
 
         legacy_model_path = self._artifacts_dir / "fall_detector.joblib"
         metadata_path = self._artifacts_dir / "fall_detector_metadata.json"
         if legacy_model_path.exists() and metadata_path.exists():
             model_stat = legacy_model_path.stat()
             metadata_stat = metadata_path.stat()
+            latest_mtime = max(model_stat.st_mtime, metadata_stat.st_mtime)
+            total_size = float(model_stat.st_size + metadata_stat.st_size)
+            for name in optional_artifacts:
+                artifact = self._artifacts_dir / name
+                if artifact.exists():
+                    aux_stat = artifact.stat()
+                    latest_mtime = max(latest_mtime, aux_stat.st_mtime)
+                    total_size += float(aux_stat.st_size)
             return (
                 str(legacy_model_path),
-                max(model_stat.st_mtime, metadata_stat.st_mtime),
-                model_stat.st_size + metadata_stat.st_size,
+                latest_mtime,
+                total_size,
             )
 
         return None
@@ -374,7 +436,10 @@ class RealtimeDetector:
             try:
                 bundle = joblib.load(bundle_path)
                 runtime = self._coerce_runtime_bundle(bundle, artifact_path=bundle_path)
-                return runtime, f"Loaded offline detector bundle from {bundle_path}."
+                return runtime, self._runtime_reason_message(
+                    prefix=f"Loaded offline detector bundle from {bundle_path}.",
+                    runtime=runtime,
+                )
             except Exception as exc:  # pragma: no cover - depends on artifact/runtime state
                 logger.exception("Failed to load offline detector bundle from %s", bundle_path)
                 return None, f"Failed to load offline detector bundle: {exc}"
@@ -387,7 +452,10 @@ class RealtimeDetector:
                     metadata = json.load(f)
                 metadata["model"] = joblib.load(legacy_model_path)
                 runtime = self._coerce_runtime_bundle(metadata, artifact_path=legacy_model_path)
-                return runtime, f"Loaded legacy offline detector artifacts from {legacy_model_path}."
+                return runtime, self._runtime_reason_message(
+                    prefix=f"Loaded legacy offline detector artifacts from {legacy_model_path}.",
+                    runtime=runtime,
+                )
             except Exception as exc:  # pragma: no cover - depends on artifact/runtime state
                 logger.exception("Failed to load legacy offline detector artifacts from %s", legacy_model_path)
                 return None, f"Failed to load legacy offline detector artifacts: {exc}"
@@ -415,6 +483,18 @@ class RealtimeDetector:
             )
         )
 
+        met_model = bundle.get("met_model")
+        if met_model is None:
+            met_model = self._load_optional_joblib_artifact("met_classifier.joblib")
+
+        met_label_encoder = bundle.get("met_label_encoder")
+        if met_label_encoder is None:
+            met_label_encoder = self._load_optional_joblib_artifact("met_label_encoder.joblib")
+
+        proxy_regressor = bundle.get("proxy_regressor")
+        if proxy_regressor is None:
+            proxy_regressor = self._load_optional_joblib_artifact("proxy_regressor.joblib")
+
         return OfflineModelBundle(
             model=bundle["model"],
             feature_columns=feature_columns,
@@ -425,4 +505,24 @@ class RealtimeDetector:
             step_size_samples=step_size_samples,
             model_name=str(bundle.get("model_name", "fall_detector")),
             artifact_path=str(artifact_path),
+            met_model=met_model,
+            met_label_encoder=met_label_encoder,
+            proxy_regressor=proxy_regressor,
         )
+
+    def _load_optional_joblib_artifact(self, filename: str) -> object | None:
+        if joblib is None:
+            return None
+        artifact_path = self._artifacts_dir / filename
+        if not artifact_path.exists():
+            return None
+        try:
+            return joblib.load(artifact_path)
+        except Exception:  # pragma: no cover - depends on artifact/runtime state
+            logger.exception("Failed to load optional detector artifact from %s", artifact_path)
+            return None
+
+    def _runtime_reason_message(self, prefix: str, runtime: OfflineModelBundle) -> str:
+        has_activity = "yes" if runtime.met_model is not None else "no"
+        has_proxy = "yes" if runtime.proxy_regressor is not None else "no"
+        return f"{prefix} Activity classifier loaded: {has_activity}. Proxy regressor loaded: {has_proxy}."

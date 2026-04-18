@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -11,7 +12,7 @@ class MonitoringController extends ChangeNotifier {
   MonitoringController({
     BackendApiClient? apiClient,
     SensorStreamingService? sensorService,
-  })  : _apiClient = apiClient ?? BackendApiClient(baseUrl: defaultBackendUrl),
+  })  : _apiClient = apiClient ?? BackendApiClient(),
         _sensorService = sensorService ??
             SensorStreamingService(
               targetSamplingRateHz: defaultSampleRateHz,
@@ -19,19 +20,18 @@ class MonitoringController extends ChangeNotifier {
               stepSize: offlineWindowStepSamples,
             );
 
-  static const String defaultBackendUrl = 'http://10.0.2.2:8000';
   static const String defaultDeviceLabel = 'Caregiver Phone';
   static const double defaultSampleRateHz = 50.0;
   static const int offlineWindowSizeSamples = 128;
   static const int offlineWindowStepSamples = 64;
 
-  static const String _backendUrlKey = 'backend_url';
   static const String _patientNameKey = 'patient_name';
   static const String _patientAgeKey = 'patient_age';
   static const String _roomLabelKey = 'room_label';
   static const String _deviceLabelKey = 'device_label';
   static const String _patientIdKey = 'patient_id';
   static const String _deviceIdKey = 'device_id';
+  static const String _authSessionKey = 'auth_session';
 
   final BackendApiClient _apiClient;
   final SensorStreamingService _sensorService;
@@ -43,7 +43,6 @@ class MonitoringController extends ChangeNotifier {
   bool _backendReachable = false;
   bool _isStreaming = false;
 
-  String _backendUrl = defaultBackendUrl;
   String _patientName = '';
   int? _patientAge;
   String _roomLabel = '';
@@ -53,7 +52,9 @@ class MonitoringController extends ChangeNotifier {
   String? _deviceId;
   String? _sessionId;
 
-  String _statusMessage = 'Enter patient and backend details to begin.';
+  AuthSessionModel? _authSession;
+
+  String _statusMessage = 'Create an account or sign in to begin.';
   String? _lastError;
 
   int _batchesSent = 0;
@@ -70,14 +71,22 @@ class MonitoringController extends ChangeNotifier {
   bool get isBusy => _isBusy;
   bool get backendReachable => _backendReachable;
   bool get isStreaming => _isStreaming;
-  bool get hasSetup =>
-      _backendUrl.trim().isNotEmpty &&
-      _patientName.trim().isNotEmpty &&
-      _deviceLabel.trim().isNotEmpty;
-  bool get isReady => hasSetup && _backendReachable;
+  bool get isAuthenticated => _authSession != null;
+  bool get isPatientRole => _authSession?.selectedRole == UserRole.patient;
+  bool get isCaregiverRole => _authSession?.selectedRole == UserRole.caregiver;
+  bool get canEnableCaregiverRole =>
+      isAuthenticated && !availableRoles.contains(UserRole.caregiver);
+  bool get hasSetup => _deviceLabel.trim().isNotEmpty;
+  bool get isReady => isAuthenticated && hasSetup && _backendReachable;
 
-  String get backendUrl => _backendUrl;
-  String get patientName => _patientName;
+  AuthSessionModel? get authSession => _authSession;
+  AuthUserProfileModel? get currentUser => _authSession?.user;
+  UserRole? get selectedRole => _authSession?.selectedRole;
+  List<UserRole> get availableRoles =>
+      _authSession?.user.availableRoles ?? const <UserRole>[];
+
+  String get patientName =>
+      _patientName.trim().isNotEmpty ? _patientName : (_authSession?.user.displayName ?? '');
   int? get patientAge => _patientAge;
   String get roomLabel => _roomLabel;
   String get deviceLabel => _deviceLabel;
@@ -101,7 +110,6 @@ class MonitoringController extends ChangeNotifier {
     }
 
     _preferences = await SharedPreferences.getInstance();
-    _backendUrl = _preferences?.getString(_backendUrlKey) ?? defaultBackendUrl;
     _patientName = _preferences?.getString(_patientNameKey) ?? '';
     _patientAge = _preferences?.getInt(_patientAgeKey);
     _roomLabel = _preferences?.getString(_roomLabelKey) ?? '';
@@ -110,14 +118,279 @@ class MonitoringController extends ChangeNotifier {
     _deviceId = _preferences?.getString(_deviceIdKey);
     _sessionId = null;
 
-    _apiClient.updateBaseUrl(_backendUrl);
+    final rawSession = _preferences?.getString(_authSessionKey);
+    if (rawSession != null && rawSession.trim().isNotEmpty) {
+      try {
+        final json = jsonDecode(rawSession);
+        if (json is Map<String, dynamic>) {
+          _authSession = AuthSessionModel.fromJson(json);
+          _apiClient.setAccessToken(_authSession!.accessToken);
+          final scopedPatientId = _authSession!.user.patientId;
+          if (scopedPatientId != null && scopedPatientId.isNotEmpty) {
+            _patientId = scopedPatientId;
+          }
+        }
+      } catch (_) {
+        _authSession = null;
+        _apiClient.setAccessToken(null);
+      }
+    }
 
-    _statusMessage = hasSetup
-        ? 'Saved setup loaded. Check the backend and start monitoring.'
-        : 'Enter patient and backend details to begin.';
+    if (_authSession != null) {
+      await _refreshAuthProfileInternal(updateStatus: false);
+    }
+
+    _statusMessage = isAuthenticated
+        ? 'Signed in. Select your role-specific workflow from the bottom navigation.'
+        : 'Create an account or sign in to begin.';
 
     _initialized = true;
     notifyListeners();
+  }
+
+  Future<void> signUpPatient({
+    required String email,
+    required String password,
+    required String fullName,
+    required String patientAgeText,
+    required String roomLabel,
+  }) async {
+    await _ensureInitialized();
+
+    final normalizedFullName = fullName.trim();
+    final normalizedEmail = email.trim();
+    final normalizedRoomLabel = roomLabel.trim();
+    final parsedAge = _parseAgeOrThrow(patientAgeText.trim());
+
+    if (normalizedFullName.isEmpty) {
+      _lastError = 'Full name is required.';
+      notifyListeners();
+      return;
+    }
+    if (normalizedEmail.isEmpty) {
+      _lastError = 'Email is required.';
+      notifyListeners();
+      return;
+    }
+    if (password.trim().length < 8) {
+      _lastError = 'Password must be at least 8 characters.';
+      notifyListeners();
+      return;
+    }
+
+    _isBusy = true;
+    _lastError = null;
+    _statusMessage = 'Creating patient account...';
+    notifyListeners();
+
+    try {
+      final session = await _apiClient.signupPatient(
+        email: normalizedEmail,
+        password: password,
+        fullName: normalizedFullName,
+        age: parsedAge,
+        roomLabel: normalizedRoomLabel.isEmpty ? null : normalizedRoomLabel,
+      );
+
+      _patientName = normalizedFullName;
+      _patientAge = parsedAge;
+      _roomLabel = normalizedRoomLabel;
+      _sessionId = null;
+      _isStreaming = false;
+      _batchesSent = 0;
+      _lastBatchSize = 0;
+      _lastTransmissionAt = null;
+      _lastDetection = null;
+      _activeAlert = null;
+      _latestTelemetry = null;
+      _liveStatus = null;
+
+      await _applyAuthSession(session, persist: true);
+      await _persistSetup();
+      await _persistIdentifiers();
+
+      _backendReachable = true;
+      _statusMessage = 'Account created. You are signed in as Patient.';
+    } catch (error) {
+      _lastError = _formatError(error);
+      _statusMessage = 'Signup failed.';
+    } finally {
+      _isBusy = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> login({
+    required String email,
+    required String password,
+    required UserRole role,
+  }) async {
+    await _ensureInitialized();
+
+    final normalizedEmail = email.trim();
+
+    if (normalizedEmail.isEmpty) {
+      _lastError = 'Email is required.';
+      notifyListeners();
+      return;
+    }
+    if (password.trim().length < 8) {
+      _lastError = 'Password must be at least 8 characters.';
+      notifyListeners();
+      return;
+    }
+
+    _isBusy = true;
+    _lastError = null;
+    _statusMessage = 'Signing in...';
+    notifyListeners();
+
+    try {
+      final session = await _apiClient.login(
+        email: normalizedEmail,
+        password: password,
+        role: role,
+      );
+
+      _sessionId = null;
+      _isStreaming = false;
+      await _applyAuthSession(session, persist: true);
+      await _persistIdentifiers();
+
+      _backendReachable = true;
+      _statusMessage = 'Signed in as ${session.selectedRole.label}.';
+    } catch (error) {
+      _lastError = _formatError(error);
+      _statusMessage = 'Login failed.';
+    } finally {
+      _isBusy = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> switchRole(UserRole role) async {
+    await _ensureInitialized();
+
+    if (_authSession == null) {
+      _lastError = 'Sign in first.';
+      notifyListeners();
+      return;
+    }
+
+    _isBusy = true;
+    _lastError = null;
+    _statusMessage = 'Switching role to ${role.label}...';
+    notifyListeners();
+
+    try {
+      if (_isStreaming) {
+        await stopMonitoring();
+      }
+
+      final session = await _apiClient.switchRole(role);
+      await _applyAuthSession(session, persist: true);
+      await _persistIdentifiers();
+
+      _statusMessage = 'Role switched to ${role.label}.';
+    } catch (error) {
+      _lastError = _formatError(error);
+      _statusMessage = 'Role switch failed.';
+    } finally {
+      _isBusy = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> enableCaregiverRole() async {
+    await _ensureInitialized();
+
+    if (_authSession == null) {
+      _lastError = 'Sign in first.';
+      notifyListeners();
+      return;
+    }
+
+    if (availableRoles.contains(UserRole.caregiver)) {
+      _statusMessage = 'Caregiver role is already enabled.';
+      notifyListeners();
+      return;
+    }
+
+    _isBusy = true;
+    _lastError = null;
+    _statusMessage = 'Enabling caregiver role...';
+    notifyListeners();
+
+    try {
+      final profile = await _apiClient.enableCaregiverRole();
+      final updatedSession = _authSession!.copyWith(user: profile);
+      await _applyAuthSession(updatedSession, persist: true);
+      _statusMessage =
+          'Caregiver role enabled. Switch roles from the account tab when needed.';
+    } catch (error) {
+      _lastError = _formatError(error);
+      _statusMessage = 'Could not enable caregiver role.';
+    } finally {
+      _isBusy = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> logout() async {
+    await _ensureInitialized();
+
+    _isBusy = true;
+    _lastError = null;
+    _statusMessage = 'Signing out...';
+    notifyListeners();
+
+    try {
+      if (_isStreaming) {
+        await _sensorService.stop();
+      }
+      _isStreaming = false;
+      _sessionId = null;
+      _patientId = null;
+      _deviceId = null;
+      _lastDetection = null;
+      _activeAlert = null;
+      _latestTelemetry = null;
+      _liveStatus = null;
+      _batchesSent = 0;
+      _lastBatchSize = 0;
+      _lastTransmissionAt = null;
+
+      await _clearAuthState(persist: true);
+      await _persistIdentifiers();
+
+      _statusMessage = 'Signed out.';
+    } catch (error) {
+      _lastError = _formatError(error);
+      _statusMessage = 'Sign out encountered an issue.';
+    } finally {
+      _isBusy = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> refreshAuthProfile({bool silent = false}) async {
+    await _ensureInitialized();
+
+    if (!silent) {
+      _isBusy = true;
+      _lastError = null;
+      _statusMessage = 'Refreshing account...';
+      notifyListeners();
+    }
+
+    try {
+      await _refreshAuthProfileInternal(updateStatus: !silent);
+    } finally {
+      if (!silent) {
+        _isBusy = false;
+        notifyListeners();
+      }
+    }
   }
 
   Future<SensorAccessStatus> refreshSensorStatus({bool silent = false}) async {
@@ -160,7 +433,6 @@ class MonitoringController extends ChangeNotifier {
   }
 
   Future<void> saveSetup({
-    required String backendUrl,
     required String patientName,
     required String patientAgeText,
     required String roomLabel,
@@ -168,22 +440,18 @@ class MonitoringController extends ChangeNotifier {
   }) async {
     await _ensureInitialized();
 
-    final normalizedBackendUrl =
-        backendUrl.trim().isEmpty ? defaultBackendUrl : backendUrl.trim();
     final normalizedPatientName = patientName.trim();
     final normalizedRoomLabel = roomLabel.trim();
     final normalizedDeviceLabel =
         deviceLabel.trim().isEmpty ? defaultDeviceLabel : deviceLabel.trim();
 
     int? parsedAge;
-    final trimmedAge = patientAgeText.trim();
-    if (trimmedAge.isNotEmpty) {
-      parsedAge = int.tryParse(trimmedAge);
-      if (parsedAge == null || parsedAge < 0 || parsedAge > 130) {
-        _lastError = 'Patient age must be a whole number between 0 and 130.';
-        notifyListeners();
-        return;
-      }
+    try {
+      parsedAge = _parseAgeOrThrow(patientAgeText.trim());
+    } catch (error) {
+      _lastError = _formatError(error);
+      notifyListeners();
+      return;
     }
 
     final patientChanged = _patientName != normalizedPatientName ||
@@ -197,13 +465,12 @@ class MonitoringController extends ChangeNotifier {
     notifyListeners();
 
     try {
-      _backendUrl = normalizedBackendUrl;
       _patientName = normalizedPatientName;
       _patientAge = parsedAge;
       _roomLabel = normalizedRoomLabel;
       _deviceLabel = normalizedDeviceLabel;
 
-      if (patientChanged) {
+      if (patientChanged && !isAuthenticated) {
         _patientId = null;
         _sessionId = null;
         _lastDetection = null;
@@ -216,8 +483,6 @@ class MonitoringController extends ChangeNotifier {
         _deviceId = null;
         _sessionId = null;
       }
-
-      _apiClient.updateBaseUrl(_backendUrl);
 
       await _persistSetup();
       await _persistIdentifiers();
@@ -275,8 +540,22 @@ class MonitoringController extends ChangeNotifier {
       return;
     }
 
+    if (!isAuthenticated) {
+      _lastError = 'Sign in before starting live monitoring.';
+      _statusMessage = 'Authentication required.';
+      notifyListeners();
+      return;
+    }
+
+    if (!isPatientRole) {
+      _lastError = 'Live sensor streaming is available only in Patient mode.';
+      _statusMessage = 'Switch to Patient role to start monitoring.';
+      notifyListeners();
+      return;
+    }
+
     if (!hasSetup) {
-      _lastError = 'Complete the backend URL, patient name, and device label first.';
+      _lastError = 'Complete the device label first.';
       _statusMessage = 'Setup is incomplete.';
       notifyListeners();
       return;
@@ -291,7 +570,7 @@ class MonitoringController extends ChangeNotifier {
       final reachable = await refreshBackendReachability(silent: true);
       if (!reachable) {
         throw ApiException(
-          'The backend is not reachable. Verify the server is running and the URL is correct.',
+          'The backend is not reachable. Verify the server is running and reachable from this device network.',
         );
       }
 
@@ -302,7 +581,7 @@ class MonitoringController extends ChangeNotifier {
         );
       }
 
-      await _ensurePatient();
+      await _ensurePatient(allowCreate: true);
       await _ensureDevice();
 
       final session = await _apiClient.startSession(
@@ -321,7 +600,7 @@ class MonitoringController extends ChangeNotifier {
       _latestTelemetry = null;
       _liveStatus = LiveStatusModel(
         patientId: _patientId!,
-        patientName: _patientName,
+        patientName: patientName,
         roomLabel: _roomLabel.isEmpty ? null : _roomLabel,
         sessionId: _sessionId,
         deviceId: _deviceId,
@@ -386,9 +665,9 @@ class MonitoringController extends ChangeNotifier {
   Future<void> triggerEmergencyAlert() async {
     await _ensureInitialized();
 
-    if (_patientName.trim().isEmpty) {
-      _lastError = 'Add a patient name before sending an emergency alert.';
-      _statusMessage = 'Emergency alert was not sent.';
+    if (!isAuthenticated) {
+      _lastError = 'Sign in before triggering an emergency alert.';
+      _statusMessage = 'Authentication required.';
       notifyListeners();
       return;
     }
@@ -406,8 +685,11 @@ class MonitoringController extends ChangeNotifier {
         );
       }
 
-      await _ensurePatient();
-      await _ensureDevice();
+      await _ensurePatient(allowCreate: isPatientRole);
+
+      if (isPatientRole) {
+        await _ensureDevice();
+      }
 
       final alert = await _apiClient.triggerManualAlert(
         patientId: _patientId!,
@@ -482,23 +764,42 @@ class MonitoringController extends ChangeNotifier {
     }
   }
 
-  Future<void> _ensurePatient() async {
+  Future<void> _ensurePatient({required bool allowCreate}) async {
+    final scopedPatientId = _authSession?.user.patientId;
+    if (scopedPatientId != null && scopedPatientId.isNotEmpty) {
+      _patientId = scopedPatientId;
+    }
+
     if (_patientId != null) {
       try {
-        await _apiClient.getPatient(_patientId!);
+        final patient = await _apiClient.getPatient(_patientId!);
+        _patientName = patient.fullName;
+        _patientAge = patient.age ?? _patientAge;
+        _roomLabel = patient.roomLabel ?? _roomLabel;
+        await _persistSetup();
+        await _persistIdentifiers();
         return;
       } catch (_) {
         _patientId = null;
       }
     }
 
+    if (!allowCreate) {
+      throw ApiException('No patient profile is linked to this account role.');
+    }
+
+    final fallbackName = patientName.trim().isEmpty ? 'Patient User' : patientName;
     final patient = await _apiClient.createPatient(
-      fullName: _patientName,
+      fullName: fallbackName,
       age: _patientAge,
       roomLabel: _roomLabel.isEmpty ? null : _roomLabel,
     );
 
     _patientId = patient.id;
+    _patientName = patient.fullName;
+    _patientAge = patient.age ?? _patientAge;
+    _roomLabel = patient.roomLabel ?? _roomLabel;
+    await _persistSetup();
     await _persistIdentifiers();
   }
 
@@ -514,18 +815,90 @@ class MonitoringController extends ChangeNotifier {
 
     final device = await _apiClient.createDevice(
       label: _deviceLabel,
-      ownerName: _patientName,
+      ownerName: patientName,
     );
 
     _deviceId = device.id;
     await _persistIdentifiers();
   }
 
+  Future<bool> _refreshAuthProfileInternal({required bool updateStatus}) async {
+    if (_authSession == null) {
+      return false;
+    }
+
+    try {
+      final profile = await _apiClient.fetchProfile();
+      AuthSessionModel updatedSession = _authSession!.copyWith(user: profile);
+
+      if (!profile.availableRoles.contains(updatedSession.selectedRole) &&
+          profile.availableRoles.isNotEmpty) {
+        updatedSession = await _apiClient.switchRole(profile.availableRoles.first);
+      }
+
+      await _applyAuthSession(updatedSession, persist: true);
+      await _persistIdentifiers();
+      if (updateStatus) {
+        _statusMessage = 'Signed in as ${updatedSession.selectedRole.label}.';
+      }
+      return true;
+    } catch (error) {
+      await _clearAuthState(persist: true);
+      _patientId = null;
+      await _persistIdentifiers();
+
+      if (updateStatus) {
+        _lastError = _formatError(error);
+        _statusMessage = 'Your session expired. Please sign in again.';
+      }
+      return false;
+    }
+  }
+
+  Future<void> _applyAuthSession(AuthSessionModel session, {required bool persist}) async {
+    _authSession = session;
+    _apiClient.setAccessToken(session.accessToken);
+
+    final scopedPatientId = session.user.patientId;
+    if (scopedPatientId != null && scopedPatientId.isNotEmpty) {
+      _patientId = scopedPatientId;
+    }
+
+    if (_patientName.trim().isEmpty) {
+      _patientName = session.user.displayName;
+    }
+
+    if (persist) {
+      await _persistAuthSession();
+    }
+  }
+
+  Future<void> _clearAuthState({required bool persist}) async {
+    _authSession = null;
+    _apiClient.setAccessToken(null);
+    if (persist) {
+      final preferences = _preferences ?? await SharedPreferences.getInstance();
+      _preferences = preferences;
+      await preferences.remove(_authSessionKey);
+    }
+  }
+
+  int? _parseAgeOrThrow(String rawAge) {
+    if (rawAge.isEmpty) {
+      return null;
+    }
+
+    final parsed = int.tryParse(rawAge);
+    if (parsed == null || parsed < 0 || parsed > 130) {
+      throw ApiException('Patient age must be a whole number between 0 and 130.');
+    }
+    return parsed;
+  }
+
   Future<void> _persistSetup() async {
     final preferences = _preferences ?? await SharedPreferences.getInstance();
     _preferences = preferences;
 
-    await preferences.setString(_backendUrlKey, _backendUrl);
     await preferences.setString(_patientNameKey, _patientName);
     await preferences.setString(_roomLabelKey, _roomLabel);
     await preferences.setString(_deviceLabelKey, _deviceLabel);
@@ -552,6 +925,18 @@ class MonitoringController extends ChangeNotifier {
     } else {
       await preferences.setString(_deviceIdKey, _deviceId!);
     }
+  }
+
+  Future<void> _persistAuthSession() async {
+    final preferences = _preferences ?? await SharedPreferences.getInstance();
+    _preferences = preferences;
+
+    if (_authSession == null) {
+      await preferences.remove(_authSessionKey);
+      return;
+    }
+
+    await preferences.setString(_authSessionKey, jsonEncode(_authSession!.toJson()));
   }
 
   Future<void> _ensureInitialized() async {

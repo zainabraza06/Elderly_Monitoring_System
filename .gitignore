@@ -1,7 +1,7 @@
 # Data and generated outputs
 /data/
 /results/
-/flask_backend/stress_reports/
+
 DETAILED_PROJECT_ANALYSIS.md
 *.log
 

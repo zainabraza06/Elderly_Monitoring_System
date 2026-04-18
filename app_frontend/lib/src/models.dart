@@ -7,6 +7,141 @@ class ApiException implements Exception {
   String toString() => message;
 }
 
+enum UserRole {
+  patient,
+  caregiver;
+
+  String get value => name;
+
+  String get label {
+    switch (this) {
+      case UserRole.patient:
+        return 'Patient';
+      case UserRole.caregiver:
+        return 'Caregiver';
+    }
+  }
+
+  static UserRole fromWire(String raw) {
+    final normalized = raw.trim().toLowerCase();
+    switch (normalized) {
+      case 'patient':
+        return UserRole.patient;
+      case 'caregiver':
+        return UserRole.caregiver;
+      default:
+        throw ApiException('Unsupported user role: $raw');
+    }
+  }
+}
+
+class AuthUserProfileModel {
+  AuthUserProfileModel({
+    required this.userId,
+    required this.email,
+    required this.displayName,
+    required this.availableRoles,
+    this.patientId,
+  });
+
+  final String userId;
+  final String email;
+  final String displayName;
+  final List<UserRole> availableRoles;
+  final String? patientId;
+
+  factory AuthUserProfileModel.fromJson(Map<String, dynamic> json) {
+    final availableRolesJson =
+        json['available_roles'] as List<dynamic>? ?? const [];
+    return AuthUserProfileModel(
+      userId: json['user_id'] as String? ?? '',
+      email: json['email'] as String? ?? '',
+      displayName: json['display_name'] as String? ?? 'User',
+      availableRoles: availableRolesJson
+          .map((role) => UserRole.fromWire(role.toString()))
+          .toList(),
+      patientId: json['patient_id'] as String?,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'user_id': userId,
+      'email': email,
+      'display_name': displayName,
+      'available_roles': availableRoles.map((role) => role.value).toList(),
+      'patient_id': patientId,
+    };
+  }
+
+  AuthUserProfileModel copyWith({
+    String? userId,
+    String? email,
+    String? displayName,
+    List<UserRole>? availableRoles,
+    String? patientId,
+    bool clearPatientId = false,
+  }) {
+    return AuthUserProfileModel(
+      userId: userId ?? this.userId,
+      email: email ?? this.email,
+      displayName: displayName ?? this.displayName,
+      availableRoles: availableRoles ?? this.availableRoles,
+      patientId: clearPatientId ? null : (patientId ?? this.patientId),
+    );
+  }
+}
+
+class AuthSessionModel {
+  AuthSessionModel({
+    required this.accessToken,
+    required this.tokenType,
+    required this.selectedRole,
+    required this.user,
+  });
+
+  final String accessToken;
+  final String tokenType;
+  final UserRole selectedRole;
+  final AuthUserProfileModel user;
+
+  factory AuthSessionModel.fromJson(Map<String, dynamic> json) {
+    return AuthSessionModel(
+      accessToken: json['access_token'] as String? ?? '',
+      tokenType: json['token_type'] as String? ?? 'bearer',
+      selectedRole: UserRole.fromWire(
+        json['selected_role'] as String? ?? 'patient',
+      ),
+      user: AuthUserProfileModel.fromJson(
+        json['user'] as Map<String, dynamic>? ?? const {},
+      ),
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'access_token': accessToken,
+      'token_type': tokenType,
+      'selected_role': selectedRole.value,
+      'user': user.toJson(),
+    };
+  }
+
+  AuthSessionModel copyWith({
+    String? accessToken,
+    String? tokenType,
+    UserRole? selectedRole,
+    AuthUserProfileModel? user,
+  }) {
+    return AuthSessionModel(
+      accessToken: accessToken ?? this.accessToken,
+      tokenType: tokenType ?? this.tokenType,
+      selectedRole: selectedRole ?? this.selectedRole,
+      user: user ?? this.user,
+    );
+  }
+}
+
 class PatientRecord {
   PatientRecord({
     required this.id,
@@ -31,11 +166,7 @@ class PatientRecord {
 }
 
 class DeviceRecord {
-  DeviceRecord({
-    required this.id,
-    required this.label,
-    required this.platform,
-  });
+  DeviceRecord({required this.id, required this.label, required this.platform});
 
   final String id;
   final String label;
@@ -81,6 +212,10 @@ class DetectionResultModel {
     required this.severity,
     required this.score,
     required this.fallProbability,
+    this.predictedActivityClass,
+    this.frailtyProxyScore,
+    this.gaitStabilityScore,
+    this.movementDisorderScore,
     required this.peakAccG,
     required this.peakGyroDps,
     required this.peakJerkGps,
@@ -93,6 +228,10 @@ class DetectionResultModel {
   final String severity;
   final double score;
   final double fallProbability;
+  final String? predictedActivityClass;
+  final double? frailtyProxyScore;
+  final double? gaitStabilityScore;
+  final double? movementDisorderScore;
   final double peakAccG;
   final double peakGyroDps;
   final double peakJerkGps;
@@ -107,6 +246,11 @@ class DetectionResultModel {
       severity: json['severity'] as String? ?? 'low',
       score: (json['score'] as num?)?.toDouble() ?? 0.0,
       fallProbability: (json['fall_probability'] as num?)?.toDouble() ?? 0.0,
+      predictedActivityClass: json['predicted_activity_class'] as String?,
+      frailtyProxyScore: (json['frailty_proxy_score'] as num?)?.toDouble(),
+      gaitStabilityScore: (json['gait_stability_score'] as num?)?.toDouble(),
+      movementDisorderScore: (json['movement_disorder_score'] as num?)
+          ?.toDouble(),
       peakAccG: (json['peak_acc_g'] as num?)?.toDouble() ?? 0.0,
       peakGyroDps: (json['peak_gyro_dps'] as num?)?.toDouble() ?? 0.0,
       peakJerkGps: (json['peak_jerk_g_per_s'] as num?)?.toDouble() ?? 0.0,
@@ -125,6 +269,7 @@ class LiveStatusModel {
     required this.severity,
     required this.score,
     required this.fallProbability,
+    this.predictedActivityClass,
     required this.lastMessage,
     this.roomLabel,
     this.sessionId,
@@ -142,13 +287,15 @@ class LiveStatusModel {
   final String severity;
   final double score;
   final double fallProbability;
+  final String? predictedActivityClass;
   final String lastMessage;
   final double? sampleRateHz;
   final Map<String, double> latestMetrics;
   final List<String> activeAlertIds;
 
   factory LiveStatusModel.fromJson(Map<String, dynamic> json) {
-    final metricsJson = json['latest_metrics'] as Map<String, dynamic>? ?? const {};
+    final metricsJson =
+        json['latest_metrics'] as Map<String, dynamic>? ?? const {};
     final alertsJson = json['active_alert_ids'] as List<dynamic>? ?? const [];
     return LiveStatusModel(
       patientId: json['patient_id'] as String? ?? '',
@@ -159,6 +306,7 @@ class LiveStatusModel {
       severity: json['severity'] as String? ?? 'low',
       score: (json['score'] as num?)?.toDouble() ?? 0.0,
       fallProbability: (json['fall_probability'] as num?)?.toDouble() ?? 0.0,
+      predictedActivityClass: json['predicted_activity_class'] as String?,
       lastMessage: json['last_message'] as String? ?? 'No live status yet.',
       sampleRateHz: (json['sample_rate_hz'] as num?)?.toDouble(),
       latestMetrics: metricsJson.map(
@@ -300,10 +448,15 @@ class TelemetrySnapshotModel {
       accelerationUnit: json['acceleration_unit'] as String? ?? 'm_s2',
       gyroscopeUnit: json['gyroscope_unit'] as String? ?? 'rad_s',
       batteryLevel: (json['battery_level'] as num?)?.toDouble(),
-      receivedAt: DateTime.tryParse(json['received_at'] as String? ?? '') ?? DateTime.now(),
+      receivedAt:
+          DateTime.tryParse(json['received_at'] as String? ?? '') ??
+          DateTime.now(),
       samplesInLastBatch: json['samples_in_last_batch'] as int? ?? 0,
       latestSamples: samples
-          .map((item) => SensorReadingPayload.fromJson(item as Map<String, dynamic>))
+          .map(
+            (item) =>
+                SensorReadingPayload.fromJson(item as Map<String, dynamic>),
+          )
           .toList(),
     );
   }
@@ -335,10 +488,14 @@ class IngestResponseModel {
       ),
       activeAlert: json['active_alert'] == null
           ? null
-          : AlertRecordModel.fromJson(json['active_alert'] as Map<String, dynamic>),
+          : AlertRecordModel.fromJson(
+              json['active_alert'] as Map<String, dynamic>,
+            ),
       telemetry: json['telemetry'] == null
           ? null
-          : TelemetrySnapshotModel.fromJson(json['telemetry'] as Map<String, dynamic>),
+          : TelemetrySnapshotModel.fromJson(
+              json['telemetry'] as Map<String, dynamic>,
+            ),
     );
   }
 }

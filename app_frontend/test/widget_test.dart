@@ -11,7 +11,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Elderly Monitor'), findsOneWidget);
-    expect(find.text('Patient Setup'), findsOneWidget);
-    expect(find.text('Start Monitoring'), findsOneWidget);
+    expect(find.text('Sign In'), findsWidgets);
+    expect(find.text('Backend URL'), findsNothing);
   });
 }

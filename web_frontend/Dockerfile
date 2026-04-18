@@ -1,6 +1,6 @@
 FROM node:20-alpine
 
-ENV PORT=3000
+ENV PORT=80
 
 WORKDIR /app/web_frontend
 
@@ -13,6 +13,6 @@ RUN npm run build
 
 ENV NODE_ENV=production
 
-EXPOSE 3000
+EXPOSE 80
 
-CMD ["sh", "-c", "npm run start -- --hostname 0.0.0.0 --port ${PORT:-3000}"]
+CMD ["sh", "-c", "npm run start -- --hostname 0.0.0.0 --port ${PORT:-80}"]

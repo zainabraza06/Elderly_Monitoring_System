@@ -252,6 +252,7 @@ class BackendStore:
             live.severity = detection.severity
             live.score = detection.score
             live.fall_probability = detection.fall_probability
+            live.predicted_activity_class = detection.predicted_activity_class
             live.last_ingested_at = now
             live.last_message = detection.message
             live.latest_metrics = {
@@ -260,6 +261,12 @@ class BackendStore:
                 "peak_jerk_g_per_s": detection.peak_jerk_g_per_s,
                 "stillness_ratio": detection.stillness_ratio,
             }
+            if detection.frailty_proxy_score is not None:
+                live.latest_metrics["frailty_proxy_score"] = detection.frailty_proxy_score
+            if detection.gait_stability_score is not None:
+                live.latest_metrics["gait_stability_score"] = detection.gait_stability_score
+            if detection.movement_disorder_score is not None:
+                live.latest_metrics["movement_disorder_score"] = detection.movement_disorder_score
             if payload.battery_level is not None:
                 live.latest_metrics["battery_level"] = payload.battery_level
 

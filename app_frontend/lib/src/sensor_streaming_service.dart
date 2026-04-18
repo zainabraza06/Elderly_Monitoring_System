@@ -4,9 +4,8 @@ import 'package:sensors_plus/sensors_plus.dart';
 
 import 'models.dart';
 
-
-typedef SensorBatchCallback = Future<void> Function(List<SensorReadingPayload> samples);
-
+typedef SensorBatchCallback =
+    Future<void> Function(List<SensorReadingPayload> samples);
 
 class SensorStreamingService {
   SensorStreamingService({
@@ -62,36 +61,51 @@ class SensorStreamingService {
     _lastSampleTimestampMs = 0;
     _isRunning = true;
 
-    _gyroscopeSubscription = gyroscopeEventStream().listen((event) {
-      _latestGyroX = event.x;
-      _latestGyroY = event.y;
-      _latestGyroZ = event.z;
-    });
+    _gyroscopeSubscription = gyroscopeEventStream().listen(
+      (event) {
+        _latestGyroX = event.x;
+        _latestGyroY = event.y;
+        _latestGyroZ = event.z;
+      },
+      onError: (_) {
+        _latestGyroX = 0.0;
+        _latestGyroY = 0.0;
+        _latestGyroZ = 0.0;
+      },
+      cancelOnError: false,
+    );
 
-    _accelerometerSubscription = accelerometerEventStream().listen((event) {
-      final nowMs = DateTime.now().millisecondsSinceEpoch;
-      final minGapMs = (1000 / targetSamplingRateHz).round();
-      if (_lastSampleTimestampMs != 0 && nowMs - _lastSampleTimestampMs < minGapMs) {
-        return;
-      }
-      _lastSampleTimestampMs = nowMs;
+    _accelerometerSubscription = accelerometerEventStream().listen(
+      (event) {
+        final nowMs = DateTime.now().millisecondsSinceEpoch;
+        final minGapMs = (1000 / targetSamplingRateHz).round();
+        if (_lastSampleTimestampMs != 0 &&
+            nowMs - _lastSampleTimestampMs < minGapMs) {
+          return;
+        }
+        _lastSampleTimestampMs = nowMs;
 
-      _buffer.add(
-        SensorReadingPayload(
-          timestampMs: nowMs,
-          accX: event.x,
-          accY: event.y,
-          accZ: event.z,
-          gyroX: _latestGyroX,
-          gyroY: _latestGyroY,
-          gyroZ: _latestGyroZ,
-        ),
-      );
+        _buffer.add(
+          SensorReadingPayload(
+            timestampMs: nowMs,
+            accX: event.x,
+            accY: event.y,
+            accZ: event.z,
+            gyroX: _latestGyroX,
+            gyroY: _latestGyroY,
+            gyroZ: _latestGyroZ,
+          ),
+        );
 
-      if (_buffer.length >= windowSize) {
-        _flush(onBatch);
-      }
-    });
+        if (_buffer.length >= windowSize) {
+          _flush(onBatch);
+        }
+      },
+      onError: (_) {
+        _isRunning = false;
+      },
+      cancelOnError: true,
+    );
   }
 
   Future<void> stop() async {

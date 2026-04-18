@@ -5,10 +5,7 @@ import 'models.dart';
 import 'monitoring_controller.dart';
 
 class ElderlyMonitorApp extends StatefulWidget {
-  const ElderlyMonitorApp({
-    super.key,
-    this.controller,
-  });
+  const ElderlyMonitorApp({super.key, this.controller});
 
   final MonitoringController? controller;
 
@@ -50,9 +47,9 @@ class _ElderlyMonitorAppState extends State<ElderlyMonitorApp> {
           brightness: Brightness.light,
         ),
         textTheme: ThemeData.light().textTheme.apply(
-              bodyColor: const Color(0xFF163126),
-              displayColor: const Color(0xFF163126),
-            ),
+          bodyColor: const Color(0xFF163126),
+          displayColor: const Color(0xFF163126),
+        ),
         cardTheme: CardThemeData(
           color: Colors.white,
           elevation: 0,
@@ -74,10 +71,7 @@ class _ElderlyMonitorAppState extends State<ElderlyMonitorApp> {
           ),
           focusedBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(18),
-            borderSide: const BorderSide(
-              color: Color(0xFF0F8579),
-              width: 1.4,
-            ),
+            borderSide: const BorderSide(color: Color(0xFF0F8579), width: 1.4),
           ),
           contentPadding: const EdgeInsets.symmetric(
             horizontal: 16,
@@ -99,10 +93,7 @@ class _ElderlyMonitorAppState extends State<ElderlyMonitorApp> {
 }
 
 class MonitoringHomePage extends StatefulWidget {
-  const MonitoringHomePage({
-    super.key,
-    required this.controller,
-  });
+  const MonitoringHomePage({super.key, required this.controller});
 
   final MonitoringController controller;
 
@@ -111,37 +102,53 @@ class MonitoringHomePage extends StatefulWidget {
 }
 
 class _MonitoringHomePageState extends State<MonitoringHomePage> {
-  late final TextEditingController _backendUrlController;
   late final TextEditingController _patientNameController;
   late final TextEditingController _patientAgeController;
   late final TextEditingController _roomLabelController;
   late final TextEditingController _deviceLabelController;
+  late final TextEditingController _authEmailController;
+  late final TextEditingController _authPasswordController;
+
+  UserRole _authRole = UserRole.patient;
+  bool _authSignupMode = false;
+  bool _obscurePassword = true;
+  int _selectedTabIndex = 0;
 
   @override
   void initState() {
     super.initState();
-    _backendUrlController = TextEditingController(text: widget.controller.backendUrl);
-    _patientNameController = TextEditingController(text: widget.controller.patientName);
+    _patientNameController = TextEditingController(
+      text: widget.controller.patientName,
+    );
     _patientAgeController = TextEditingController(
       text: widget.controller.patientAge?.toString() ?? '',
     );
-    _roomLabelController = TextEditingController(text: widget.controller.roomLabel);
-    _deviceLabelController = TextEditingController(text: widget.controller.deviceLabel);
+    _roomLabelController = TextEditingController(
+      text: widget.controller.roomLabel,
+    );
+    _deviceLabelController = TextEditingController(
+      text: widget.controller.deviceLabel,
+    );
+    _authEmailController = TextEditingController(
+      text: widget.controller.currentUser?.email ?? '',
+    );
+    _authPasswordController = TextEditingController();
+    _authRole = widget.controller.selectedRole ?? UserRole.patient;
   }
 
   @override
   void dispose() {
-    _backendUrlController.dispose();
     _patientNameController.dispose();
     _patientAgeController.dispose();
     _roomLabelController.dispose();
     _deviceLabelController.dispose();
+    _authEmailController.dispose();
+    _authPasswordController.dispose();
     super.dispose();
   }
 
   Future<void> _saveSetup() async {
     await widget.controller.saveSetup(
-      backendUrl: _backendUrlController.text,
       patientName: _patientNameController.text,
       patientAgeText: _patientAgeController.text,
       roomLabel: _roomLabelController.text,
@@ -156,81 +163,536 @@ class _MonitoringHomePageState extends State<MonitoringHomePage> {
     }
   }
 
+  Future<void> _submitAuth() async {
+    final controller = widget.controller;
+
+    if (_authSignupMode) {
+      await controller.signUpPatient(
+        email: _authEmailController.text,
+        password: _authPasswordController.text,
+        fullName: _patientNameController.text,
+        patientAgeText: _patientAgeController.text,
+        roomLabel: _roomLabelController.text,
+      );
+      if (controller.lastError == null) {
+        setState(() {
+          _authSignupMode = false;
+          _selectedTabIndex = 0;
+          _authPasswordController.clear();
+        });
+      }
+      return;
+    }
+
+    await controller.login(
+      email: _authEmailController.text,
+      password: _authPasswordController.text,
+      role: _authRole,
+    );
+
+    if (controller.lastError == null) {
+      setState(() {
+        _selectedTabIndex = 0;
+        _authPasswordController.clear();
+      });
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
       animation: widget.controller,
       builder: (context, _) {
         final controller = widget.controller;
-        return Scaffold(
-          body: Container(
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: <Color>[
-                  Color(0xFFE2F2EA),
-                  Color(0xFFF4EEE4),
-                  Color(0xFFF9F6F1),
-                ],
-              ),
-            ),
-            child: SafeArea(
-              child: Stack(
-                children: <Widget>[
-                  SingleChildScrollView(
-                    padding: const EdgeInsets.fromLTRB(20, 18, 20, 28),
-                    child: Center(
-                      child: ConstrainedBox(
-                        constraints: const BoxConstraints(maxWidth: 760),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: <Widget>[
-                            _HeroPanel(controller: controller),
-                            const SizedBox(height: 18),
-                            if (controller.lastError != null) ...<Widget>[
-                              _BannerMessage(
-                                title: 'Attention Needed',
-                                message: controller.lastError!,
-                                backgroundColor: const Color(0xFFFCE2DF),
-                                accentColor: const Color(0xFFB53B34),
-                              ),
-                              const SizedBox(height: 14),
-                            ],
-                            _BannerMessage(
-                              title: 'Live Status',
-                              message: controller.statusMessage,
-                              backgroundColor: const Color(0xFFE8F4F1),
-                              accentColor: const Color(0xFF0F8579),
-                            ),
-                            const SizedBox(height: 18),
-                            _buildSetupCard(controller),
-                            const SizedBox(height: 18),
-                            _buildSensorAccessCard(controller),
-                            const SizedBox(height: 18),
-                            _buildSessionCard(controller),
-                            const SizedBox(height: 18),
-                            _buildDetectionCard(controller),
-                            const SizedBox(height: 18),
-                            _buildEmergencyCard(controller),
-                          ],
+        if (!controller.isAuthenticated) {
+          return _buildUnauthenticatedShell(controller);
+        }
+        return _buildAuthenticatedShell(controller);
+      },
+    );
+  }
+
+  Widget _buildUnauthenticatedShell(MonitoringController controller) {
+    return Scaffold(
+      body: Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: <Color>[
+              Color(0xFFE2F2EA),
+              Color(0xFFF4EEE4),
+              Color(0xFFF9F6F1),
+            ],
+          ),
+        ),
+        child: SafeArea(
+          child: Stack(
+            children: <Widget>[
+              SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(20, 24, 20, 28),
+                child: Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 560),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: <Widget>[
+                        const SizedBox(height: 10),
+                        const Text(
+                          'Elderly Monitor',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 32,
+                            fontWeight: FontWeight.w800,
+                            color: Color(0xFF163126),
+                          ),
                         ),
-                      ),
+                        const SizedBox(height: 10),
+                        Text(
+                          _authSignupMode
+                              ? 'Create a patient account first. You can enable Caregiver mode later and use the same credentials to switch roles.'
+                              : 'Sign in with your shared credentials, then choose Patient or Caregiver role for this session.',
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            color: Color(0xFF4F635A),
+                            height: 1.45,
+                          ),
+                        ),
+                        const SizedBox(height: 18),
+                        if (controller.lastError != null) ...<Widget>[
+                          _BannerMessage(
+                            title: 'Authentication Issue',
+                            message: controller.lastError!,
+                            backgroundColor: const Color(0xFFFCE2DF),
+                            accentColor: const Color(0xFFB53B34),
+                          ),
+                          const SizedBox(height: 14),
+                        ],
+                        _BannerMessage(
+                          title: 'Status',
+                          message: controller.statusMessage,
+                          backgroundColor: const Color(0xFFE8F4F1),
+                          accentColor: const Color(0xFF0F8579),
+                        ),
+                        const SizedBox(height: 14),
+                        _CardShell(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: <Widget>[
+                              _SectionHeader(
+                                title: _authSignupMode
+                                    ? 'Patient Sign Up'
+                                    : 'Sign In',
+                                subtitle: _authSignupMode
+                                    ? 'Create your account and patient profile in one step.'
+                                    : 'Use the same account and pick the role for this login.',
+                              ),
+                              const SizedBox(height: 18),
+                              TextField(
+                                controller: _authEmailController,
+                                keyboardType: TextInputType.emailAddress,
+                                decoration: const InputDecoration(
+                                  labelText: 'Email',
+                                  hintText: 'patient@example.com',
+                                ),
+                              ),
+                              const SizedBox(height: 12),
+                              TextField(
+                                controller: _authPasswordController,
+                                obscureText: _obscurePassword,
+                                decoration: InputDecoration(
+                                  labelText: 'Password',
+                                  hintText: 'At least 8 characters',
+                                  suffixIcon: IconButton(
+                                    onPressed: () {
+                                      setState(() {
+                                        _obscurePassword = !_obscurePassword;
+                                      });
+                                    },
+                                    icon: Icon(
+                                      _obscurePassword
+                                          ? Icons.visibility_outlined
+                                          : Icons.visibility_off_outlined,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              if (_authSignupMode) ...<Widget>[
+                                const SizedBox(height: 12),
+                                TextField(
+                                  controller: _patientNameController,
+                                  decoration: const InputDecoration(
+                                    labelText: 'Patient Full Name',
+                                    hintText: 'Abdul Hameed',
+                                  ),
+                                ),
+                                const SizedBox(height: 12),
+                                TextField(
+                                  controller: _patientAgeController,
+                                  keyboardType: TextInputType.number,
+                                  inputFormatters: <TextInputFormatter>[
+                                    FilteringTextInputFormatter.digitsOnly,
+                                  ],
+                                  decoration: const InputDecoration(
+                                    labelText: 'Patient Age (optional)',
+                                    hintText: '72',
+                                  ),
+                                ),
+                                const SizedBox(height: 12),
+                                TextField(
+                                  controller: _roomLabelController,
+                                  decoration: const InputDecoration(
+                                    labelText: 'Room Label (optional)',
+                                    hintText: 'Room 204',
+                                  ),
+                                ),
+                              ] else ...<Widget>[
+                                const SizedBox(height: 12),
+                                DropdownButtonFormField<UserRole>(
+                                  key: ValueKey<UserRole>(_authRole),
+                                  initialValue: _authRole,
+                                  decoration: const InputDecoration(
+                                    labelText: 'Role for this sign-in',
+                                  ),
+                                  items: UserRole.values
+                                      .map(
+                                        (role) => DropdownMenuItem<UserRole>(
+                                          value: role,
+                                          child: Text(role.label),
+                                        ),
+                                      )
+                                      .toList(),
+                                  onChanged: (value) {
+                                    if (value == null) {
+                                      return;
+                                    }
+                                    setState(() {
+                                      _authRole = value;
+                                    });
+                                  },
+                                ),
+                              ],
+                              const SizedBox(height: 18),
+                              FilledButton.icon(
+                                onPressed: controller.isBusy
+                                    ? null
+                                    : _submitAuth,
+                                icon: Icon(
+                                  _authSignupMode
+                                      ? Icons.person_add_alt_1_outlined
+                                      : Icons.login_rounded,
+                                ),
+                                label: Text(
+                                  _authSignupMode
+                                      ? 'Create Account'
+                                      : 'Sign In',
+                                ),
+                              ),
+                              const SizedBox(height: 10),
+                              TextButton(
+                                onPressed: controller.isBusy
+                                    ? null
+                                    : () {
+                                        setState(() {
+                                          _authSignupMode = !_authSignupMode;
+                                        });
+                                      },
+                                child: Text(
+                                  _authSignupMode
+                                      ? 'Already have an account? Sign in'
+                                      : 'Need a patient account? Sign up',
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                  if (controller.isBusy)
-                    const Positioned(
-                      left: 0,
-                      right: 0,
-                      top: 0,
-                      child: LinearProgressIndicator(minHeight: 3),
-                    ),
-                ],
+                ),
               ),
+              if (controller.isBusy)
+                const Positioned(
+                  left: 0,
+                  right: 0,
+                  top: 0,
+                  child: LinearProgressIndicator(minHeight: 3),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAuthenticatedShell(MonitoringController controller) {
+    final destinations = <NavigationDestination>[
+      NavigationDestination(
+        icon: const Icon(Icons.dashboard_outlined),
+        selectedIcon: const Icon(Icons.dashboard_rounded),
+        label: controller.isCaregiverRole ? 'Overview' : 'Dashboard',
+      ),
+      const NavigationDestination(
+        icon: Icon(Icons.notifications_active_outlined),
+        selectedIcon: Icon(Icons.notifications_active_rounded),
+        label: 'Alerts',
+      ),
+      const NavigationDestination(
+        icon: Icon(Icons.manage_accounts_outlined),
+        selectedIcon: Icon(Icons.manage_accounts_rounded),
+        label: 'Account',
+      ),
+    ];
+
+    final pages = <Widget>[
+      if (controller.isCaregiverRole)
+        _buildCaregiverDashboardPage(controller)
+      else
+        _buildPatientDashboardPage(controller),
+      _buildAlertsPage(controller),
+      _buildAccountPage(controller),
+    ];
+
+    final effectiveIndex = _selectedTabIndex >= pages.length
+        ? 0
+        : _selectedTabIndex;
+
+    return Scaffold(
+      body: Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: <Color>[
+              Color(0xFFE2F2EA),
+              Color(0xFFF4EEE4),
+              Color(0xFFF9F6F1),
+            ],
+          ),
+        ),
+        child: SafeArea(
+          child: Stack(
+            children: <Widget>[
+              IndexedStack(index: effectiveIndex, children: pages),
+              if (controller.isBusy)
+                const Positioned(
+                  left: 0,
+                  right: 0,
+                  top: 0,
+                  child: LinearProgressIndicator(minHeight: 3),
+                ),
+            ],
+          ),
+        ),
+      ),
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: effectiveIndex,
+        destinations: destinations,
+        onDestinationSelected: (index) {
+          setState(() {
+            _selectedTabIndex = index;
+          });
+        },
+      ),
+    );
+  }
+
+  Widget _buildPatientDashboardPage(MonitoringController controller) {
+    return _buildScrollablePage(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          _HeroPanel(controller: controller),
+          const SizedBox(height: 18),
+          if (controller.lastError != null) ...<Widget>[
+            _BannerMessage(
+              title: 'Attention Needed',
+              message: controller.lastError!,
+              backgroundColor: const Color(0xFFFCE2DF),
+              accentColor: const Color(0xFFB53B34),
+            ),
+            const SizedBox(height: 14),
+          ],
+          _BannerMessage(
+            title: 'Live Status',
+            message: controller.statusMessage,
+            backgroundColor: const Color(0xFFE8F4F1),
+            accentColor: const Color(0xFF0F8579),
+          ),
+          const SizedBox(height: 18),
+          _buildSetupCard(controller),
+          const SizedBox(height: 18),
+          _buildSensorAccessCard(controller),
+          const SizedBox(height: 18),
+          _buildSessionCard(controller),
+          const SizedBox(height: 18),
+          _buildDetectionCard(controller),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCaregiverDashboardPage(MonitoringController controller) {
+    return _buildScrollablePage(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          _HeroPanel(controller: controller),
+          const SizedBox(height: 18),
+          if (controller.lastError != null) ...<Widget>[
+            _BannerMessage(
+              title: 'Attention Needed',
+              message: controller.lastError!,
+              backgroundColor: const Color(0xFFFCE2DF),
+              accentColor: const Color(0xFFB53B34),
+            ),
+            const SizedBox(height: 14),
+          ],
+          _BannerMessage(
+            title: 'Caregiver View',
+            message:
+                'Monitoring control is disabled in caregiver mode. Use this view for visibility and emergency actions.',
+            backgroundColor: const Color(0xFFE8F4F1),
+            accentColor: const Color(0xFF0F8579),
+          ),
+          const SizedBox(height: 18),
+          _buildDetectionCard(controller),
+          const SizedBox(height: 18),
+          _buildSessionCard(controller),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAlertsPage(MonitoringController controller) {
+    return _buildScrollablePage(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          _HeroPanel(controller: controller),
+          const SizedBox(height: 18),
+          _BannerMessage(
+            title: 'Alert Center',
+            message: controller.statusMessage,
+            backgroundColor: const Color(0xFFE8F4F1),
+            accentColor: const Color(0xFF0F8579),
+          ),
+          const SizedBox(height: 18),
+          _buildEmergencyCard(controller),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAccountPage(MonitoringController controller) {
+    return _buildScrollablePage(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          _HeroPanel(controller: controller),
+          const SizedBox(height: 18),
+          _buildSetupCard(controller),
+          const SizedBox(height: 18),
+          _CardShell(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: <Widget>[
+                const _SectionHeader(
+                  title: 'Account and Roles',
+                  subtitle:
+                      'Use the same credentials for both experiences. Switch role anytime based on who is using the app.',
+                ),
+                const SizedBox(height: 16),
+                _InfoRow(
+                  label: 'Name',
+                  value: controller.currentUser?.displayName ?? 'Unknown',
+                ),
+                _InfoRow(
+                  label: 'Email',
+                  value: controller.currentUser?.email ?? 'Unknown',
+                ),
+                _InfoRow(
+                  label: 'Role',
+                  value: controller.selectedRole?.label ?? 'Unknown',
+                ),
+                const SizedBox(height: 10),
+                Wrap(
+                  spacing: 10,
+                  runSpacing: 10,
+                  children: controller.availableRoles
+                      .map(
+                        (role) => _MetricChip(
+                          label: 'Available Role',
+                          value: role.label,
+                        ),
+                      )
+                      .toList(),
+                ),
+                const SizedBox(height: 16),
+                Wrap(
+                  spacing: 10,
+                  runSpacing: 10,
+                  children: <Widget>[
+                    for (final role in controller.availableRoles)
+                      FilledButton.tonalIcon(
+                        onPressed:
+                            controller.isBusy || controller.selectedRole == role
+                            ? null
+                            : () => controller.switchRole(role),
+                        icon: const Icon(Icons.swap_horiz_rounded),
+                        label: Text('Switch to ${role.label}'),
+                      ),
+                    FilledButton.tonalIcon(
+                      onPressed: controller.isBusy
+                          ? null
+                          : controller.refreshAuthProfile,
+                      icon: const Icon(Icons.refresh_rounded),
+                      label: const Text('Refresh Account'),
+                    ),
+                    if (controller.canEnableCaregiverRole)
+                      FilledButton.icon(
+                        onPressed: controller.isBusy
+                            ? null
+                            : controller.enableCaregiverRole,
+                        icon: const Icon(Icons.person_add_alt_1_rounded),
+                        label: const Text('Enable Caregiver Role'),
+                      ),
+                    OutlinedButton.icon(
+                      onPressed: controller.isBusy
+                          ? null
+                          : () {
+                              setState(() {
+                                _authRole = UserRole.patient;
+                              });
+                              controller.logout();
+                            },
+                      icon: const Icon(Icons.logout_rounded),
+                      label: const Text('Sign Out'),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                const Text(
+                  'Observer accounts are represented as Caregiver role in this build.',
+                  style: TextStyle(color: Color(0xFF51645C), height: 1.4),
+                ),
+              ],
             ),
           ),
-        );
-      },
+        ],
+      ),
+    );
+  }
+
+  Widget _buildScrollablePage({required Widget child}) {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(20, 18, 20, 28),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 760),
+          child: child,
+        ),
+      ),
     );
   }
 
@@ -277,10 +739,11 @@ class _MonitoringHomePageState extends State<MonitoringHomePage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
-          const _SectionHeader(
+          _SectionHeader(
             title: 'Live Session',
-            subtitle:
-                'Start or stop sensor streaming, and keep an eye on the current backend session.',
+            subtitle: controller.isPatientRole
+                ? 'Start or stop sensor streaming, and keep an eye on the current backend session.'
+                : 'Caregiver mode is read-only for session control. Switch to Patient role to stream device sensors.',
           ),
           const SizedBox(height: 18),
           Wrap(
@@ -312,12 +775,19 @@ class _MonitoringHomePageState extends State<MonitoringHomePage> {
             children: <Widget>[
               FilledButton.icon(
                 onPressed:
-                    controller.isStreaming || controller.isBusy ? null : _saveAndStart,
+                    controller.isPatientRole &&
+                        !controller.isStreaming &&
+                        !controller.isBusy
+                    ? _saveAndStart
+                    : null,
                 icon: const Icon(Icons.play_arrow_rounded),
                 label: const Text('Start Monitoring'),
               ),
               OutlinedButton.icon(
-                onPressed: controller.isStreaming && !controller.isBusy
+                onPressed:
+                    controller.isPatientRole &&
+                        controller.isStreaming &&
+                        !controller.isBusy
                     ? controller.stopMonitoring
                     : null,
                 icon: const Icon(Icons.stop_circle_outlined),
@@ -325,6 +795,13 @@ class _MonitoringHomePageState extends State<MonitoringHomePage> {
               ),
             ],
           ),
+          if (!controller.isPatientRole) ...<Widget>[
+            const SizedBox(height: 12),
+            const Text(
+              'Use Account -> Switch Role to move into Patient mode when you need to start or stop live streaming from this device.',
+              style: TextStyle(color: Color(0xFF51645C), height: 1.4),
+            ),
+          ],
         ],
       ),
     );
@@ -386,19 +863,14 @@ class _MonitoringHomePageState extends State<MonitoringHomePage> {
                 OutlinedButton.icon(
                   onPressed: null,
                   icon: const Icon(Icons.memory_outlined),
-                  label: Text(
-                    'Source ${latestTelemetry.source}',
-                  ),
+                  label: Text('Source ${latestTelemetry.source}'),
                 ),
             ],
           ),
           const SizedBox(height: 14),
           const Text(
             'On some devices the operating system shows the motion access prompt the first time sensor streams are touched. Keep the app open and allow access if prompted.',
-            style: TextStyle(
-              color: Color(0xFF51645C),
-              height: 1.4,
-            ),
+            style: TextStyle(color: Color(0xFF51645C), height: 1.4),
           ),
         ],
       ),
@@ -443,21 +915,14 @@ class _MonitoringHomePageState extends State<MonitoringHomePage> {
   }
 
   Widget _buildPrimarySetupFields(MonitoringController controller) {
+    final canEditPatientProfile =
+        !controller.isStreaming && !controller.isCaregiverRole;
+
     return Column(
       children: <Widget>[
         TextField(
-          controller: _backendUrlController,
-          enabled: !controller.isStreaming,
-          keyboardType: TextInputType.url,
-          decoration: const InputDecoration(
-            labelText: 'Backend URL',
-            hintText: 'http://10.0.2.2:8000',
-          ),
-        ),
-        const SizedBox(height: 12),
-        TextField(
           controller: _patientNameController,
-          enabled: !controller.isStreaming,
+          enabled: canEditPatientProfile,
           decoration: const InputDecoration(
             labelText: 'Patient Name',
             hintText: 'Abdul Hameed',
@@ -466,7 +931,7 @@ class _MonitoringHomePageState extends State<MonitoringHomePage> {
         const SizedBox(height: 12),
         TextField(
           controller: _patientAgeController,
-          enabled: !controller.isStreaming,
+          enabled: canEditPatientProfile,
           keyboardType: TextInputType.number,
           inputFormatters: <TextInputFormatter>[
             FilteringTextInputFormatter.digitsOnly,
@@ -481,11 +946,14 @@ class _MonitoringHomePageState extends State<MonitoringHomePage> {
   }
 
   Widget _buildSecondarySetupFields(MonitoringController controller) {
+    final canEditPatientProfile =
+        !controller.isStreaming && !controller.isCaregiverRole;
+
     return Column(
       children: <Widget>[
         TextField(
           controller: _roomLabelController,
-          enabled: !controller.isStreaming,
+          enabled: canEditPatientProfile,
           decoration: const InputDecoration(
             labelText: 'Room Label',
             hintText: 'Room 204',
@@ -522,7 +990,9 @@ class _MonitoringHomePageState extends State<MonitoringHomePage> {
               const SizedBox(height: 10),
               _InfoRow(
                 label: 'Backend',
-                value: controller.backendReachable ? 'Reachable' : 'Offline or not checked',
+                value: controller.backendReachable
+                    ? 'Reachable'
+                    : 'Offline or not checked',
               ),
               _InfoRow(
                 label: 'Ready',
@@ -531,6 +1001,10 @@ class _MonitoringHomePageState extends State<MonitoringHomePage> {
               _InfoRow(
                 label: 'Streaming',
                 value: controller.isStreaming ? 'Active' : 'Stopped',
+              ),
+              _InfoRow(
+                label: 'Role',
+                value: controller.selectedRole?.label ?? 'Not signed in',
               ),
             ],
           ),
@@ -541,7 +1015,9 @@ class _MonitoringHomePageState extends State<MonitoringHomePage> {
           runSpacing: 10,
           children: <Widget>[
             FilledButton.icon(
-              onPressed: controller.isStreaming || controller.isBusy ? null : _saveSetup,
+              onPressed: controller.isStreaming || controller.isBusy
+                  ? null
+                  : _saveSetup,
               icon: const Icon(Icons.save_outlined),
               label: const Text('Save Setup'),
             ),
@@ -556,11 +1032,8 @@ class _MonitoringHomePageState extends State<MonitoringHomePage> {
         ),
         const SizedBox(height: 14),
         const Text(
-          'Tip: use 10.0.2.2 for the Android emulator, 127.0.0.1 for the iOS simulator, and your computer\'s LAN IP for a physical phone.',
-          style: TextStyle(
-            color: Color(0xFF51645C),
-            height: 1.4,
-          ),
+          'Tip: if backend checks fail, confirm the server is running and reachable from this phone network.',
+          style: TextStyle(color: Color(0xFF51645C), height: 1.4),
         ),
       ],
     );
@@ -572,11 +1045,7 @@ class _LoadingScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Scaffold(
-      body: Center(
-        child: CircularProgressIndicator(),
-      ),
-    );
+    return const Scaffold(body: Center(child: CircularProgressIndicator()));
   }
 }
 
@@ -588,7 +1057,9 @@ class _HeroPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final statusColor = _severityColor(
-      controller.liveStatus?.severity ?? controller.lastDetection?.severity ?? 'low',
+      controller.liveStatus?.severity ??
+          controller.lastDetection?.severity ??
+          'low',
     );
 
     return Container(
@@ -598,10 +1069,7 @@ class _HeroPanel extends StatelessWidget {
         gradient: const LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: <Color>[
-            Color(0xFF0F8579),
-            Color(0xFF174B6D),
-          ],
+          colors: <Color>[Color(0xFF0F8579), Color(0xFF174B6D)],
         ),
         boxShadow: const <BoxShadow>[
           BoxShadow(
@@ -631,9 +1099,11 @@ class _HeroPanel extends StatelessWidget {
                     ),
                     const SizedBox(height: 10),
                     Text(
-                      controller.patientName.isEmpty
+                      controller.currentUser == null
                           ? 'Set up the patient profile to begin live mobile monitoring.'
-                          : 'Live detection profile for ${controller.patientName}${controller.roomLabel.isEmpty ? '' : ' - ${controller.roomLabel}'}',
+                          : controller.isCaregiverRole
+                          ? 'Caregiver oversight mode for ${controller.patientName.isEmpty ? controller.currentUser!.displayName : controller.patientName}${controller.roomLabel.isEmpty ? '' : ' - ${controller.roomLabel}'}'
+                          : 'Patient monitoring mode for ${controller.patientName.isEmpty ? controller.currentUser!.displayName : controller.patientName}${controller.roomLabel.isEmpty ? '' : ' - ${controller.roomLabel}'}',
                       style: const TextStyle(
                         color: Color(0xFFF0F7F4),
                         height: 1.5,
@@ -644,7 +1114,10 @@ class _HeroPanel extends StatelessWidget {
                 ),
               ),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 10,
+                ),
                 decoration: BoxDecoration(
                   color: Colors.white.withValues(alpha: 0.16),
                   borderRadius: BorderRadius.circular(16),
@@ -691,14 +1164,12 @@ class _HeroPanel extends StatelessWidget {
                 value: controller.isStreaming ? 'Streaming' : 'Idle',
               ),
               _HeroStat(
-                label: 'Batches',
-                value: controller.batchesSent.toString(),
+                label: 'Role',
+                value: controller.selectedRole?.label ?? 'Unknown',
               ),
               _HeroStat(
-                label: 'Last batch',
-                value: controller.lastBatchSize == 0
-                    ? 'None'
-                    : '${controller.lastBatchSize} samples',
+                label: 'Batches',
+                value: controller.batchesSent.toString(),
               ),
             ],
           ),
@@ -709,21 +1180,31 @@ class _HeroPanel extends StatelessWidget {
 }
 
 class _DetectionPanel extends StatelessWidget {
-  const _DetectionPanel({
-    required this.detection,
-    required this.liveStatus,
-  });
+  const _DetectionPanel({required this.detection, required this.liveStatus});
 
   final DetectionResultModel? detection;
   final LiveStatusModel? liveStatus;
 
   @override
   Widget build(BuildContext context) {
-    final effectiveSeverity = liveStatus?.severity ?? detection?.severity ?? 'low';
+    final effectiveSeverity =
+        liveStatus?.severity ?? detection?.severity ?? 'low';
     final severityColor = _severityColor(effectiveSeverity);
-    final message = liveStatus?.lastMessage ??
+    final message =
+        liveStatus?.lastMessage ??
         detection?.message ??
         'No sensor batches have been analyzed yet.';
+    final predictedActivityClass =
+        detection?.predictedActivityClass ?? liveStatus?.predictedActivityClass;
+    final frailtyScore =
+        detection?.frailtyProxyScore ??
+        liveStatus?.latestMetrics['frailty_proxy_score'];
+    final gaitStabilityScore =
+        detection?.gaitStabilityScore ??
+        liveStatus?.latestMetrics['gait_stability_score'];
+    final movementDisorderScore =
+        detection?.movementDisorderScore ??
+        liveStatus?.latestMetrics['movement_disorder_score'];
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -785,7 +1266,10 @@ class _DetectionPanel extends StatelessWidget {
             Expanded(
               child: _ScorePanel(
                 title: 'Fall Probability',
-                value: detection?.fallProbability ?? liveStatus?.fallProbability ?? 0,
+                value:
+                    detection?.fallProbability ??
+                    liveStatus?.fallProbability ??
+                    0,
                 color: const Color(0xFFCC5A3C),
               ),
             ),
@@ -798,7 +1282,9 @@ class _DetectionPanel extends StatelessWidget {
           children: <Widget>[
             _MetricChip(
               label: 'Peak Acceleration',
-              value: detection == null ? 'Pending' : '${detection!.peakAccG.toStringAsFixed(2)} g',
+              value: detection == null
+                  ? 'Pending'
+                  : '${detection!.peakAccG.toStringAsFixed(2)} g',
             ),
             _MetricChip(
               label: 'Peak Gyroscope',
@@ -818,14 +1304,38 @@ class _DetectionPanel extends StatelessWidget {
                   ? 'Pending'
                   : '${(detection!.stillnessRatio * 100).toStringAsFixed(0)}%',
             ),
+            _MetricChip(
+              label: 'Activity Class',
+              value: predictedActivityClass == null
+                  ? 'Pending'
+                  : _formatActivityClass(predictedActivityClass),
+            ),
+            _MetricChip(
+              label: 'Frailty Proxy',
+              value: frailtyScore == null
+                  ? 'Pending'
+                  : '${(frailtyScore * 100).toStringAsFixed(0)}%',
+            ),
+            _MetricChip(
+              label: 'Gait Stability',
+              value: gaitStabilityScore == null
+                  ? 'Pending'
+                  : '${(gaitStabilityScore * 100).toStringAsFixed(0)}%',
+            ),
+            _MetricChip(
+              label: 'Movement Disorder',
+              value: movementDisorderScore == null
+                  ? 'Pending'
+                  : '${(movementDisorderScore * 100).toStringAsFixed(0)}%',
+            ),
           ],
         ),
         const SizedBox(height: 18),
         Text(
           'Detector Reasons',
-          style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                fontWeight: FontWeight.w700,
-              ),
+          style: Theme.of(
+            context,
+          ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
         ),
         const SizedBox(height: 10),
         if (detection == null || detection!.reasons.isEmpty)
@@ -840,7 +1350,10 @@ class _DetectionPanel extends StatelessWidget {
             children: detection!.reasons
                 .map(
                   (reason) => Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 10,
+                    ),
                     decoration: BoxDecoration(
                       color: const Color(0xFFF2EFE9),
                       borderRadius: BorderRadius.circular(16),
@@ -853,6 +1366,23 @@ class _DetectionPanel extends StatelessWidget {
       ],
     );
   }
+}
+
+String _formatActivityClass(String rawLabel) {
+  final normalized = rawLabel.trim().replaceAll('_', ' ');
+  if (normalized.isEmpty) {
+    return 'Unknown';
+  }
+  return normalized
+      .split(RegExp(r'\s+'))
+      .map((word) {
+        if (word.isEmpty) {
+          return word;
+        }
+        final lower = word.toLowerCase();
+        return '${lower[0].toUpperCase()}${lower.substring(1)}';
+      })
+      .join(' ');
 }
 
 class _EmergencyPanel extends StatelessWidget {
@@ -886,9 +1416,9 @@ class _EmergencyPanel extends StatelessWidget {
                 child: Text(
                   'Use the manual trigger when a caregiver needs to raise an alert immediately, even if the automatic detector has not classified a fall yet.',
                   style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: const Color(0xFF5B3A2C),
-                        height: 1.45,
-                      ),
+                    color: const Color(0xFF5B3A2C),
+                    height: 1.45,
+                  ),
                 ),
               ),
             ],
@@ -901,7 +1431,9 @@ class _EmergencyPanel extends StatelessWidget {
             foregroundColor: Colors.white,
             padding: const EdgeInsets.symmetric(vertical: 16),
           ),
-          onPressed: controller.isBusy ? null : controller.triggerEmergencyAlert,
+          onPressed: controller.isBusy
+              ? null
+              : controller.triggerEmergencyAlert,
           icon: const Icon(Icons.sos_outlined),
           label: const Text('Send Emergency Alert'),
         ),
@@ -915,7 +1447,10 @@ class _EmergencyPanel extends StatelessWidget {
           Column(
             children: <Widget>[
               _InfoRow(label: 'Alert ID', value: alert.id),
-              _InfoRow(label: 'Severity', value: _severityLabel(alert.severity)),
+              _InfoRow(
+                label: 'Severity',
+                value: _severityLabel(alert.severity),
+              ),
               _InfoRow(label: 'Status', value: alert.status),
               _InfoRow(label: 'Message', value: alert.message),
             ],
@@ -959,10 +1494,7 @@ class _ScorePanel extends StatelessWidget {
           const SizedBox(height: 10),
           Text(
             '${(safeValue * 100).toStringAsFixed(0)}%',
-            style: const TextStyle(
-              fontSize: 24,
-              fontWeight: FontWeight.w800,
-            ),
+            style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w800),
           ),
           const SizedBox(height: 10),
           ClipRRect(
@@ -1004,10 +1536,7 @@ class _BannerMessage extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
-          Icon(
-            Icons.info_outline_rounded,
-            color: accentColor,
-          ),
+          Icon(Icons.info_outline_rounded, color: accentColor),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
@@ -1045,19 +1574,13 @@ class _CardShell extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: child,
-      ),
+      child: Padding(padding: const EdgeInsets.all(20), child: child),
     );
   }
 }
 
 class _SectionHeader extends StatelessWidget {
-  const _SectionHeader({
-    required this.title,
-    required this.subtitle,
-  });
+  const _SectionHeader({required this.title, required this.subtitle});
 
   final String title;
   final String subtitle;
@@ -1069,17 +1592,14 @@ class _SectionHeader extends StatelessWidget {
       children: <Widget>[
         Text(
           title,
-          style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                fontWeight: FontWeight.w800,
-              ),
+          style: Theme.of(
+            context,
+          ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
         ),
         const SizedBox(height: 6),
         Text(
           subtitle,
-          style: const TextStyle(
-            color: Color(0xFF5F726A),
-            height: 1.5,
-          ),
+          style: const TextStyle(color: Color(0xFF5F726A), height: 1.5),
         ),
       ],
     );
@@ -1087,10 +1607,7 @@ class _SectionHeader extends StatelessWidget {
 }
 
 class _MetricChip extends StatelessWidget {
-  const _MetricChip({
-    required this.label,
-    required this.value,
-  });
+  const _MetricChip({required this.label, required this.value});
 
   final String label;
   final String value;
@@ -1130,10 +1647,7 @@ class _MetricChip extends StatelessWidget {
 }
 
 class _SensorStatusTile extends StatelessWidget {
-  const _SensorStatusTile({
-    required this.label,
-    required this.isReady,
-  });
+  const _SensorStatusTile({required this.label, required this.isReady});
 
   final String label;
   final bool isReady;
@@ -1155,10 +1669,7 @@ class _SensorStatusTile extends StatelessWidget {
           Container(
             width: 12,
             height: 12,
-            decoration: BoxDecoration(
-              color: color,
-              shape: BoxShape.circle,
-            ),
+            decoration: BoxDecoration(color: color, shape: BoxShape.circle),
           ),
           const SizedBox(width: 10),
           Flexible(
@@ -1187,10 +1698,7 @@ class _SensorStatusTile extends StatelessWidget {
 }
 
 class _InfoRow extends StatelessWidget {
-  const _InfoRow({
-    required this.label,
-    required this.value,
-  });
+  const _InfoRow({required this.label, required this.value});
 
   final String label;
   final String value;
@@ -1215,9 +1723,7 @@ class _InfoRow extends StatelessWidget {
           Expanded(
             child: Text(
               value,
-              style: const TextStyle(
-                color: Color(0xFF163126),
-              ),
+              style: const TextStyle(color: Color(0xFF163126)),
             ),
           ),
         ],
@@ -1227,10 +1733,7 @@ class _InfoRow extends StatelessWidget {
 }
 
 class _HeroStat extends StatelessWidget {
-  const _HeroStat({
-    required this.label,
-    required this.value,
-  });
+  const _HeroStat({required this.label, required this.value});
 
   final String label;
   final String value;
@@ -1294,7 +1797,9 @@ String _severityLabel(String severity) {
     case 'fall_detected':
       return 'Fall Detected';
     default:
-      return severity.isEmpty ? 'Low' : severity.replaceAll('_', ' ').toUpperCase();
+      return severity.isEmpty
+          ? 'Low'
+          : severity.replaceAll('_', ' ').toUpperCase();
   }
 }
 
