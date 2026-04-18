@@ -49,6 +49,7 @@ auth_service = AuthService(
 )
 monitor_manager = MonitorConnectionManager()
 logger = logging.getLogger(__name__)
+startup_logger = logging.getLogger("uvicorn.error")
 
 
 def create_app() -> FastAPI:
@@ -101,6 +102,14 @@ def create_app() -> FastAPI:
                 "Auth backend fallback in use (%s). %s",
                 auth_status.get("backend"),
                 auth_status.get("error"),
+            )
+
+        if persistence.get("enabled") and auth_status.get("enabled"):
+            startup_logger.info(
+                "DB connected: backend=%s uri=%s database=%s",
+                persistence.get("backend"),
+                persistence.get("uri"),
+                persistence.get("database"),
             )
 
         status = detector.status()
