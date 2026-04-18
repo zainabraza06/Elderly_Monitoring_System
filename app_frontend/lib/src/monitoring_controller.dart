@@ -12,13 +12,14 @@ class MonitoringController extends ChangeNotifier {
   MonitoringController({
     BackendApiClient? apiClient,
     SensorStreamingService? sensorService,
-  })  : _apiClient = apiClient ?? BackendApiClient(),
-        _sensorService = sensorService ??
-            SensorStreamingService(
-              targetSamplingRateHz: defaultSampleRateHz,
-              windowSize: offlineWindowSizeSamples,
-              stepSize: offlineWindowStepSamples,
-            );
+  }) : _apiClient = apiClient ?? BackendApiClient(),
+       _sensorService =
+           sensorService ??
+           SensorStreamingService(
+             targetSamplingRateHz: defaultSampleRateHz,
+             windowSize: offlineWindowSizeSamples,
+             stepSize: offlineWindowStepSamples,
+           );
 
   static const String defaultDeviceLabel = 'Caregiver Phone';
   static const double defaultSampleRateHz = 50.0;
@@ -85,8 +86,9 @@ class MonitoringController extends ChangeNotifier {
   List<UserRole> get availableRoles =>
       _authSession?.user.availableRoles ?? const <UserRole>[];
 
-  String get patientName =>
-      _patientName.trim().isNotEmpty ? _patientName : (_authSession?.user.displayName ?? '');
+  String get patientName => _patientName.trim().isNotEmpty
+      ? _patientName
+      : (_authSession?.user.displayName ?? '');
   int? get patientAge => _patientAge;
   String get roomLabel => _roomLabel;
   String get deviceLabel => _deviceLabel;
@@ -113,7 +115,8 @@ class MonitoringController extends ChangeNotifier {
     _patientName = _preferences?.getString(_patientNameKey) ?? '';
     _patientAge = _preferences?.getInt(_patientAgeKey);
     _roomLabel = _preferences?.getString(_roomLabelKey) ?? '';
-    _deviceLabel = _preferences?.getString(_deviceLabelKey) ?? defaultDeviceLabel;
+    _deviceLabel =
+        _preferences?.getString(_deviceLabelKey) ?? defaultDeviceLabel;
     _patientId = _preferences?.getString(_patientIdKey);
     _deviceId = _preferences?.getString(_deviceIdKey);
     _sessionId = null;
@@ -442,8 +445,9 @@ class MonitoringController extends ChangeNotifier {
 
     final normalizedPatientName = patientName.trim();
     final normalizedRoomLabel = roomLabel.trim();
-    final normalizedDeviceLabel =
-        deviceLabel.trim().isEmpty ? defaultDeviceLabel : deviceLabel.trim();
+    final normalizedDeviceLabel = deviceLabel.trim().isEmpty
+        ? defaultDeviceLabel
+        : deviceLabel.trim();
 
     int? parsedAge;
     try {
@@ -454,7 +458,8 @@ class MonitoringController extends ChangeNotifier {
       return;
     }
 
-    final patientChanged = _patientName != normalizedPatientName ||
+    final patientChanged =
+        _patientName != normalizedPatientName ||
         _patientAge != parsedAge ||
         _roomLabel != normalizedRoomLabel;
     final deviceChanged = _deviceLabel != normalizedDeviceLabel;
@@ -493,7 +498,8 @@ class MonitoringController extends ChangeNotifier {
           : 'Setup saved. Backend could not be reached yet.';
     } catch (error) {
       _lastError = _formatError(error);
-      _statusMessage = 'Setup was updated locally, but the connection check failed.';
+      _statusMessage =
+          'Setup was updated locally, but the connection check failed.';
     } finally {
       _isBusy = false;
       notifyListeners();
@@ -612,7 +618,8 @@ class MonitoringController extends ChangeNotifier {
 
       await _persistIdentifiers();
       _sensorService.start(_handleSensorBatch);
-      _statusMessage = 'Monitoring is live. The phone is now streaming sensor batches.';
+      _statusMessage =
+          'Monitoring is live. The phone is now streaming sensor batches.';
     } catch (error) {
       _isStreaming = false;
       _sessionId = null;
@@ -788,7 +795,9 @@ class MonitoringController extends ChangeNotifier {
       throw ApiException('No patient profile is linked to this account role.');
     }
 
-    final fallbackName = patientName.trim().isEmpty ? 'Patient User' : patientName;
+    final fallbackName = patientName.trim().isEmpty
+        ? 'Patient User'
+        : patientName;
     final patient = await _apiClient.createPatient(
       fullName: fallbackName,
       age: _patientAge,
@@ -833,7 +842,9 @@ class MonitoringController extends ChangeNotifier {
 
       if (!profile.availableRoles.contains(updatedSession.selectedRole) &&
           profile.availableRoles.isNotEmpty) {
-        updatedSession = await _apiClient.switchRole(profile.availableRoles.first);
+        updatedSession = await _apiClient.switchRole(
+          profile.availableRoles.first,
+        );
       }
 
       await _applyAuthSession(updatedSession, persist: true);
@@ -855,7 +866,10 @@ class MonitoringController extends ChangeNotifier {
     }
   }
 
-  Future<void> _applyAuthSession(AuthSessionModel session, {required bool persist}) async {
+  Future<void> _applyAuthSession(
+    AuthSessionModel session, {
+    required bool persist,
+  }) async {
     _authSession = session;
     _apiClient.setAccessToken(session.accessToken);
 
@@ -890,7 +904,9 @@ class MonitoringController extends ChangeNotifier {
 
     final parsed = int.tryParse(rawAge);
     if (parsed == null || parsed < 0 || parsed > 130) {
-      throw ApiException('Patient age must be a whole number between 0 and 130.');
+      throw ApiException(
+        'Patient age must be a whole number between 0 and 130.',
+      );
     }
     return parsed;
   }
@@ -936,7 +952,10 @@ class MonitoringController extends ChangeNotifier {
       return;
     }
 
-    await preferences.setString(_authSessionKey, jsonEncode(_authSession!.toJson()));
+    await preferences.setString(
+      _authSessionKey,
+      jsonEncode(_authSession!.toJson()),
+    );
   }
 
   Future<void> _ensureInitialized() async {
