@@ -35,6 +35,11 @@ class GyroscopeUnit(str, Enum):
     rad_s = "rad_s"
 
 
+class UserRole(str, Enum):
+    patient = "patient"
+    caregiver = "caregiver"
+
+
 class HealthResponse(BaseModel):
     status: str
     app_name: str
@@ -148,6 +153,69 @@ class APIErrorResponse(BaseModel):
     trace_id: str
     timestamp: datetime
     details: Any | None = None
+
+
+class AuthSignupPatientRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    email: str = Field(..., min_length=5, max_length=160)
+    password: str = Field(..., min_length=8, max_length=128)
+    full_name: str = Field(..., min_length=1, max_length=120)
+    age: Optional[int] = Field(default=None, ge=0, le=130)
+    room_label: Optional[str] = Field(default=None, max_length=80)
+
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, value: str) -> str:
+        clean = value.strip().lower()
+        if "@" not in clean or clean.startswith("@") or clean.endswith("@"):
+            raise ValueError("email must be a valid address.")
+        return clean
+
+    @field_validator("full_name")
+    @classmethod
+    def validate_signup_name(cls, value: str) -> str:
+        clean = value.strip()
+        if not clean:
+            raise ValueError("full_name cannot be blank.")
+        return clean
+
+
+class AuthLoginRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    email: str = Field(..., min_length=5, max_length=160)
+    password: str = Field(..., min_length=8, max_length=128)
+    role: UserRole
+
+    @field_validator("email")
+    @classmethod
+    def validate_login_email(cls, value: str) -> str:
+        clean = value.strip().lower()
+        if "@" not in clean or clean.startswith("@") or clean.endswith("@"):
+            raise ValueError("email must be a valid address.")
+        return clean
+
+
+class AuthSwitchRoleRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    role: UserRole
+
+
+class AuthUserProfile(BaseModel):
+    user_id: str
+    email: str
+    display_name: str
+    available_roles: list[UserRole]
+    patient_id: Optional[str] = None
+
+
+class AuthSessionResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    selected_role: UserRole
+    user: AuthUserProfile
 
 
 class PatientCreate(BaseModel):
@@ -292,6 +360,10 @@ class DetectionResult(BaseModel):
     severity: AlertSeverity
     score: float = Field(..., ge=0, le=1)
     fall_probability: float = Field(..., ge=0, le=1)
+    predicted_activity_class: Optional[str] = None
+    frailty_proxy_score: Optional[float] = Field(default=None, ge=0, le=1)
+    gait_stability_score: Optional[float] = Field(default=None, ge=0, le=1)
+    movement_disorder_score: Optional[float] = Field(default=None, ge=0, le=1)
     peak_acc_g: float = Field(..., ge=0)
     peak_gyro_dps: float = Field(..., ge=0)
     peak_jerk_g_per_s: float = Field(..., ge=0)
@@ -310,6 +382,7 @@ class PatientLiveStatus(BaseModel):
     severity: AlertSeverity = AlertSeverity.low
     score: float = 0.0
     fall_probability: float = 0.0
+    predicted_activity_class: Optional[str] = None
     last_ingested_at: Optional[datetime] = None
     last_message: str = "No live data yet."
     sample_rate_hz: Optional[float] = None

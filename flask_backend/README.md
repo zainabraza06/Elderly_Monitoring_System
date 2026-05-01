@@ -17,8 +17,19 @@ It provides:
 
 ```bash
 python -m pip install -r flask_backend/requirements.txt
+set EMS_MONGO_URI=mongodb://127.0.0.1:27017
+set EMS_MONGO_DATABASE=elderly_monitoring
 python -m uvicorn flask_backend.app.main:app --reload --host 0.0.0.0 --port 8000
 ```
+
+## MongoDB Persistence
+
+- Mongo URI env: `EMS_MONGO_URI`
+- Mongo DB env: `EMS_MONGO_DATABASE`
+- Backend store class: `flask_backend/app/mongo_store.py`
+- Auth persistence class: `flask_backend/app/auth_service.py`
+
+If MongoDB is unreachable, the backend automatically falls back to in-memory state and logs a warning.
 
 ## API Documentation
 
@@ -46,7 +57,8 @@ python -m uvicorn flask_backend.app.main:app --reload --host 0.0.0.0 --port 8000
 
 - The current detector is rule-based so the mobile and web apps can be built immediately.
 - The detection service is isolated in `flask_backend/app/detection.py`, so it can later be replaced with a trained ML model service without changing the API contract.
-- State is currently in-memory for rapid development. Swap `store.py` to a database-backed implementation when persistence is needed.
+- State is persisted using MongoDB when `EMS_MONGO_URI` and `EMS_MONGO_DATABASE` are configured and reachable.
+- If MongoDB is unavailable, backend falls back to in-memory mode for compatibility.
 - The standalone monitoring dashboard lives in the `web_frontend/` Next.js app and uses the REST endpoints for initial state plus `/ws/monitor` for live updates.
 
 ## Validation And Error Contract
