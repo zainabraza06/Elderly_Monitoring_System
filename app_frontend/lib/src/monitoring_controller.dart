@@ -1,6 +1,8 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter_ringtone_player/flutter_ringtone_player.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'api_client.dart';
@@ -28,10 +30,22 @@ class MonitoringController extends ChangeNotifier {
   static const String _backendUrlKey = 'backend_url';
   static const String _patientNameKey = 'patient_name';
   static const String _patientAgeKey = 'patient_age';
-  static const String _roomLabelKey = 'room_label';
   static const String _deviceLabelKey = 'device_label';
   static const String _patientIdKey = 'patient_id';
   static const String _deviceIdKey = 'device_id';
+  static const String _medicalNotesKey = 'medical_notes';
+  static const String _emergencyContactKey = 'emergency_contact';
+  static const String _photoPathKey = 'photo_path';
+  static const String _notificationsEnabledKey = 'notifications_enabled';
+  static const String _alertSensitivityKey = 'alert_sensitivity';
+  static const String _alertViaEmailKey = 'alert_via_email';
+  static const String _alertViaAlarmKey = 'alert_via_alarm';
+  static const String _caregiverEmailKey = 'caregiver_email';
+  static const String _homeLatitudeKey = 'home_latitude';
+  static const String _homeLongitudeKey = 'home_longitude';
+  static const String _caregiverTokenKey = 'caregiver_token';
+  static const String _caregiverNameKey = 'caregiver_name';
+  static const String _caregiverEmailAuthKey = 'caregiver_email_auth';
 
   final BackendApiClient _apiClient;
   final SensorStreamingService _sensorService;
@@ -46,7 +60,6 @@ class MonitoringController extends ChangeNotifier {
   String _backendUrl = defaultBackendUrl;
   String _patientName = '';
   int? _patientAge;
-  String _roomLabel = '';
   String _deviceLabel = defaultDeviceLabel;
 
   String? _patientId;
@@ -65,6 +78,30 @@ class MonitoringController extends ChangeNotifier {
   AlertRecordModel? _activeAlert;
   TelemetrySnapshotModel? _latestTelemetry;
   SensorAccessStatus? _sensorAccessStatus;
+  String _medicalNotes = '';
+  String _emergencyContact = '';
+  String? _photoPath;
+  SystemSummaryModel? _summary;
+  List<LiveStatusModel> _livePatients = <LiveStatusModel>[];
+  List<AlertRecordModel> _caregiverAlerts = <AlertRecordModel>[];
+  Timer? _autoRefreshTimer;
+  bool _notificationsEnabled = true;
+  String _alertSensitivity = 'medium';
+  bool _alertViaEmail = false;
+  bool _alertViaAlarm = true;
+  String _caregiverEmail = '';
+  bool _alarmPlaying = false;
+  bool _alarmSilencedByUser = false;
+  StreamSubscription<Position>? _locationSubscription;
+  Position? _currentPosition;
+  double? _homeLatitude;
+  double? _homeLongitude;
+  bool _locationTrackingEnabled = false;
+  String? _locationError;
+  String? _caregiverToken;
+  String _caregiverName = '';
+  String _caregiverAuthEmail = '';
+  GeneratedPatientCredentialModel? _lastGeneratedCredential;
 
   bool get initialized => _initialized;
   bool get isBusy => _isBusy;
@@ -79,7 +116,6 @@ class MonitoringController extends ChangeNotifier {
   String get backendUrl => _backendUrl;
   String get patientName => _patientName;
   int? get patientAge => _patientAge;
-  String get roomLabel => _roomLabel;
   String get deviceLabel => _deviceLabel;
   String? get patientId => _patientId;
   String? get deviceId => _deviceId;
@@ -94,6 +130,28 @@ class MonitoringController extends ChangeNotifier {
   AlertRecordModel? get activeAlert => _activeAlert;
   TelemetrySnapshotModel? get latestTelemetry => _latestTelemetry;
   SensorAccessStatus? get sensorAccessStatus => _sensorAccessStatus;
+  String get medicalNotes => _medicalNotes;
+  String get emergencyContact => _emergencyContact;
+  String? get photoPath => _photoPath;
+  SystemSummaryModel? get summary => _summary;
+  List<LiveStatusModel> get livePatients => List.unmodifiable(_livePatients);
+  List<AlertRecordModel> get caregiverAlerts => List.unmodifiable(_caregiverAlerts);
+  bool get notificationsEnabled => _notificationsEnabled;
+  String get alertSensitivity => _alertSensitivity;
+  bool get alertViaEmail => _alertViaEmail;
+  bool get alertViaAlarm => _alertViaAlarm;
+  String get caregiverEmail => _caregiverEmail;
+  bool get isAlarmPlaying => _alarmPlaying;
+  Position? get currentPosition => _currentPosition;
+  bool get locationTrackingEnabled => _locationTrackingEnabled;
+  String? get locationError => _locationError;
+  double? get homeLatitude => _homeLatitude;
+  double? get homeLongitude => _homeLongitude;
+  bool get hasHomeLocation => _homeLatitude != null && _homeLongitude != null;
+  bool get isCaregiverAuthenticated => _caregiverToken != null && _caregiverToken!.isNotEmpty;
+  String get caregiverName => _caregiverName;
+  String get caregiverAuthEmail => _caregiverAuthEmail;
+  GeneratedPatientCredentialModel? get lastGeneratedCredential => _lastGeneratedCredential;
 
   Future<void> initialize() async {
     if (_initialized) {
@@ -104,10 +162,22 @@ class MonitoringController extends ChangeNotifier {
     _backendUrl = _preferences?.getString(_backendUrlKey) ?? defaultBackendUrl;
     _patientName = _preferences?.getString(_patientNameKey) ?? '';
     _patientAge = _preferences?.getInt(_patientAgeKey);
-    _roomLabel = _preferences?.getString(_roomLabelKey) ?? '';
     _deviceLabel = _preferences?.getString(_deviceLabelKey) ?? defaultDeviceLabel;
     _patientId = _preferences?.getString(_patientIdKey);
     _deviceId = _preferences?.getString(_deviceIdKey);
+    _medicalNotes = _preferences?.getString(_medicalNotesKey) ?? '';
+    _emergencyContact = _preferences?.getString(_emergencyContactKey) ?? '';
+    _photoPath = _preferences?.getString(_photoPathKey);
+    _notificationsEnabled = _preferences?.getBool(_notificationsEnabledKey) ?? true;
+    _alertSensitivity = _preferences?.getString(_alertSensitivityKey) ?? 'medium';
+    _alertViaEmail = _preferences?.getBool(_alertViaEmailKey) ?? false;
+    _alertViaAlarm = _preferences?.getBool(_alertViaAlarmKey) ?? true;
+    _caregiverEmail = _preferences?.getString(_caregiverEmailKey) ?? '';
+    _homeLatitude = _preferences?.getDouble(_homeLatitudeKey);
+    _homeLongitude = _preferences?.getDouble(_homeLongitudeKey);
+    _caregiverToken = _preferences?.getString(_caregiverTokenKey);
+    _caregiverName = _preferences?.getString(_caregiverNameKey) ?? '';
+    _caregiverAuthEmail = _preferences?.getString(_caregiverEmailAuthKey) ?? '';
     _sessionId = null;
 
     _apiClient.updateBaseUrl(_backendUrl);
@@ -117,6 +187,290 @@ class MonitoringController extends ChangeNotifier {
         : 'Enter patient and backend details to begin.';
 
     _initialized = true;
+    _ensureAutoRefresh();
+    unawaited(startLocationTracking());
+    unawaited(refreshCaregiverData(silent: true));
+    notifyListeners();
+  }
+
+  Future<void> caregiverSignup({
+    required String fullName,
+    required String email,
+    required String password,
+  }) async {
+    _isBusy = true;
+    _lastError = null;
+    notifyListeners();
+    try {
+      final auth = await _apiClient.caregiverSignup(
+        fullName: fullName.trim(),
+        email: email.trim(),
+        password: password,
+      );
+      _caregiverToken = auth.accessToken;
+      _caregiverName = auth.caregiverName;
+      _caregiverAuthEmail = auth.caregiverEmail;
+      await _persistCaregiverAuth();
+      _statusMessage = 'Caregiver account ready.';
+    } catch (error) {
+      _lastError = _formatError(error);
+      _statusMessage = 'Unable to create caregiver account.';
+    } finally {
+      _isBusy = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> caregiverLogin({
+    required String email,
+    required String password,
+  }) async {
+    _isBusy = true;
+    _lastError = null;
+    notifyListeners();
+    try {
+      final auth = await _apiClient.caregiverLogin(
+        email: email.trim(),
+        password: password,
+      );
+      _caregiverToken = auth.accessToken;
+      _caregiverName = auth.caregiverName;
+      _caregiverAuthEmail = auth.caregiverEmail;
+      await _persistCaregiverAuth();
+      _statusMessage = 'Welcome back $_caregiverName.';
+    } catch (error) {
+      _lastError = _formatError(error);
+      _statusMessage = 'Unable to sign in.';
+    } finally {
+      _isBusy = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> caregiverLogout() async {
+    _caregiverToken = null;
+    _caregiverName = '';
+    _caregiverAuthEmail = '';
+    _lastGeneratedCredential = null;
+    final preferences = _preferences ?? await SharedPreferences.getInstance();
+    _preferences = preferences;
+    await preferences.remove(_caregiverTokenKey);
+    await preferences.remove(_caregiverNameKey);
+    await preferences.remove(_caregiverEmailAuthKey);
+    notifyListeners();
+  }
+
+  Future<void> generatePatientCredentials({
+    required String fullName,
+    required String ageText,
+    required String homeAddress,
+    required String emergencyContact,
+    required String notes,
+  }) async {
+    final token = _caregiverToken;
+    if (token == null || token.isEmpty) {
+      _lastError = 'Caregiver sign-in required first.';
+      notifyListeners();
+      return;
+    }
+
+    int? age;
+    final parsed = ageText.trim();
+    if (parsed.isNotEmpty) {
+      final maybeAge = int.tryParse(parsed);
+      if (maybeAge == null || maybeAge < 0 || maybeAge > 130) {
+        _lastError = 'Patient age must be between 0 and 130.';
+        notifyListeners();
+        return;
+      }
+      age = maybeAge;
+    }
+
+    _isBusy = true;
+    _lastError = null;
+    notifyListeners();
+    try {
+      final created = await _apiClient.generatePatientCredentials(
+        caregiverToken: token,
+        fullName: fullName.trim(),
+        age: age,
+        homeAddress: homeAddress.trim(),
+        emergencyContact: emergencyContact.trim().isEmpty ? null : emergencyContact.trim(),
+        notes: notes.trim().isEmpty ? null : notes.trim(),
+      );
+      _lastGeneratedCredential = created;
+
+      if (_patientName.trim().isEmpty) {
+        _patientName = created.patientName;
+      }
+      if (_emergencyContact.trim().isEmpty) {
+        _emergencyContact = emergencyContact.trim();
+      }
+      _statusMessage = 'Patient credentials generated successfully.';
+    } catch (error) {
+      _lastError = _formatError(error);
+      _statusMessage = 'Unable to generate patient credentials.';
+    } finally {
+      _isBusy = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> startLocationTracking() async {
+    await _ensureInitialized();
+    _locationError = null;
+
+    final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      _locationTrackingEnabled = false;
+      _locationError = 'Location services are turned off.';
+      notifyListeners();
+      return;
+    }
+
+    var permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+    }
+    if (permission == LocationPermission.denied || permission == LocationPermission.deniedForever) {
+      _locationTrackingEnabled = false;
+      _locationError = 'Location permission denied.';
+      notifyListeners();
+      return;
+    }
+
+    _locationTrackingEnabled = true;
+    await _locationSubscription?.cancel();
+    _locationSubscription = Geolocator.getPositionStream(
+      locationSettings: const LocationSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: 5,
+      ),
+    ).listen(
+      (position) {
+        _currentPosition = position;
+        _locationError = null;
+        notifyListeners();
+      },
+      onError: (error) {
+        _locationError = error.toString();
+        notifyListeners();
+      },
+    );
+
+    try {
+      _currentPosition ??= await Geolocator.getCurrentPosition();
+    } catch (error) {
+      _locationError = error.toString();
+    }
+    notifyListeners();
+  }
+
+  Future<void> stopLocationTracking() async {
+    await _locationSubscription?.cancel();
+    _locationSubscription = null;
+    _locationTrackingEnabled = false;
+    notifyListeners();
+  }
+
+  Future<void> setHomeLocationFromCurrent() async {
+    if (_currentPosition == null) {
+      _locationError = 'Current location is not available yet.';
+      notifyListeners();
+      return;
+    }
+    _homeLatitude = _currentPosition!.latitude;
+    _homeLongitude = _currentPosition!.longitude;
+    await _persistHomeLocation();
+    _statusMessage = 'Home location updated.';
+    notifyListeners();
+  }
+
+  Future<void> clearHomeLocation() async {
+    _homeLatitude = null;
+    _homeLongitude = null;
+    await _persistHomeLocation();
+    notifyListeners();
+  }
+
+  Future<void> setNotificationsEnabled(bool enabled) async {
+    _notificationsEnabled = enabled;
+    final preferences = _preferences ?? await SharedPreferences.getInstance();
+    _preferences = preferences;
+    await preferences.setBool(_notificationsEnabledKey, enabled);
+    if (!enabled) {
+      _stopAlarmIfPlaying();
+    } else {
+      _syncAlarmWithAlerts();
+    }
+    notifyListeners();
+  }
+
+  Future<void> setAlertSensitivity(String level) async {
+    _isBusy = true;
+    _lastError = null;
+    notifyListeners();
+    try {
+      await _apiClient.updateDetectorSensitivity(level);
+      _alertSensitivity = level;
+      final preferences = _preferences ?? await SharedPreferences.getInstance();
+      _preferences = preferences;
+      await preferences.setString(_alertSensitivityKey, level);
+      _statusMessage = 'Alert sensitivity updated.';
+    } catch (error) {
+      _lastError = _formatError(error);
+      _statusMessage = 'Unable to update alert sensitivity.';
+    } finally {
+      _isBusy = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> setAlertViaEmail(bool enabled) async {
+    _alertViaEmail = enabled;
+    final preferences = _preferences ?? await SharedPreferences.getInstance();
+    _preferences = preferences;
+    await preferences.setBool(_alertViaEmailKey, enabled);
+    notifyListeners();
+  }
+
+  Future<void> setAlertViaAlarm(bool enabled) async {
+    _alertViaAlarm = enabled;
+    final preferences = _preferences ?? await SharedPreferences.getInstance();
+    _preferences = preferences;
+    await preferences.setBool(_alertViaAlarmKey, enabled);
+    if (!enabled) {
+      _stopAlarmIfPlaying();
+    } else {
+      _syncAlarmWithAlerts();
+    }
+    notifyListeners();
+  }
+
+  Future<void> setCaregiverEmail(String email) async {
+    _caregiverEmail = email.trim();
+    final preferences = _preferences ?? await SharedPreferences.getInstance();
+    _preferences = preferences;
+    await preferences.setString(_caregiverEmailKey, _caregiverEmail);
+    notifyListeners();
+  }
+
+  Future<void> updateProfile({
+    required String patientName,
+    required String patientAgeText,
+    required String medicalNotes,
+    required String emergencyContact,
+  }) async {
+    await saveSetup(
+      backendUrl: _backendUrl,
+      patientName: patientName,
+      patientAgeText: patientAgeText,
+      deviceLabel: _deviceLabel,
+    );
+
+    _medicalNotes = medicalNotes.trim();
+    _emergencyContact = emergencyContact.trim();
+    await _persistCareProfile();
     notifyListeners();
   }
 
@@ -163,7 +517,6 @@ class MonitoringController extends ChangeNotifier {
     required String backendUrl,
     required String patientName,
     required String patientAgeText,
-    required String roomLabel,
     required String deviceLabel,
   }) async {
     await _ensureInitialized();
@@ -171,7 +524,6 @@ class MonitoringController extends ChangeNotifier {
     final normalizedBackendUrl =
         backendUrl.trim().isEmpty ? defaultBackendUrl : backendUrl.trim();
     final normalizedPatientName = patientName.trim();
-    final normalizedRoomLabel = roomLabel.trim();
     final normalizedDeviceLabel =
         deviceLabel.trim().isEmpty ? defaultDeviceLabel : deviceLabel.trim();
 
@@ -186,9 +538,7 @@ class MonitoringController extends ChangeNotifier {
       }
     }
 
-    final patientChanged = _patientName != normalizedPatientName ||
-        _patientAge != parsedAge ||
-        _roomLabel != normalizedRoomLabel;
+    final patientChanged = _patientName != normalizedPatientName || _patientAge != parsedAge;
     final deviceChanged = _deviceLabel != normalizedDeviceLabel;
 
     _isBusy = true;
@@ -200,7 +550,6 @@ class MonitoringController extends ChangeNotifier {
       _backendUrl = normalizedBackendUrl;
       _patientName = normalizedPatientName;
       _patientAge = parsedAge;
-      _roomLabel = normalizedRoomLabel;
       _deviceLabel = normalizedDeviceLabel;
 
       if (patientChanged) {
@@ -322,7 +671,6 @@ class MonitoringController extends ChangeNotifier {
       _liveStatus = LiveStatusModel(
         patientId: _patientId!,
         patientName: _patientName,
-        roomLabel: _roomLabel.isEmpty ? null : _roomLabel,
         sessionId: _sessionId,
         deviceId: _deviceId,
         severity: 'low',
@@ -416,10 +764,89 @@ class MonitoringController extends ChangeNotifier {
       );
 
       _activeAlert = alert;
+      await refreshCaregiverData(silent: true);
       _statusMessage = 'Emergency alert sent successfully.';
     } catch (error) {
       _lastError = _formatError(error);
       _statusMessage = 'Emergency alert failed.';
+    } finally {
+      _isBusy = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> refreshCaregiverData({bool silent = false}) async {
+    await _ensureInitialized();
+    if (!silent) {
+      _isBusy = true;
+      _lastError = null;
+      notifyListeners();
+    }
+
+    try {
+      final summaryFuture = _apiClient.getSummary();
+      final liveFuture = _apiClient.getLivePatients();
+      final alertsFuture = _apiClient.getAlerts();
+      final responses = await Future.wait<Object>([
+        summaryFuture,
+        liveFuture,
+        alertsFuture,
+      ]);
+      _summary = responses[0] as SystemSummaryModel;
+      _livePatients = responses[1] as List<LiveStatusModel>;
+      _caregiverAlerts = responses[2] as List<AlertRecordModel>;
+
+      if (_patientId != null) {
+        final matched = _livePatients.where((item) => item.patientId == _patientId).toList();
+        if (matched.isNotEmpty) {
+          _liveStatus = matched.first;
+        }
+      }
+      _syncAlarmWithAlerts();
+      _backendReachable = true;
+      _lastError = null;
+    } catch (error) {
+      _backendReachable = false;
+      _lastError = _formatError(error);
+      if (!silent) {
+        _statusMessage = 'Unable to refresh monitoring information right now.';
+      }
+    } finally {
+      if (!silent) {
+        _isBusy = false;
+      }
+      notifyListeners();
+    }
+  }
+
+  Future<void> acknowledgeAlert(String alertId) async {
+    _isBusy = true;
+    _lastError = null;
+    notifyListeners();
+    try {
+      await _apiClient.acknowledgeAlert(alertId: alertId);
+      await refreshCaregiverData(silent: true);
+      _statusMessage = 'Alert acknowledged.';
+    } catch (error) {
+      _lastError = _formatError(error);
+      _statusMessage = 'Unable to acknowledge alert.';
+    } finally {
+      _isBusy = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> resolveAlert(String alertId) async {
+    _isBusy = true;
+    _lastError = null;
+    notifyListeners();
+    try {
+      await _apiClient.resolveAlert(alertId: alertId);
+      await refreshCaregiverData(silent: true);
+      _statusMessage = 'Alert resolved.';
+    } catch (error) {
+      _lastError = _formatError(error);
+      _statusMessage = 'Unable to resolve alert.';
     } finally {
       _isBusy = false;
       notifyListeners();
@@ -467,6 +894,7 @@ class MonitoringController extends ChangeNotifier {
       }
 
       _statusMessage = response.detection.message;
+      unawaited(refreshCaregiverData(silent: true));
     } catch (error) {
       if (!_isStreaming || _sessionId != currentSessionId) {
         return;
@@ -495,7 +923,6 @@ class MonitoringController extends ChangeNotifier {
     final patient = await _apiClient.createPatient(
       fullName: _patientName,
       age: _patientAge,
-      roomLabel: _roomLabel.isEmpty ? null : _roomLabel,
     );
 
     _patientId = patient.id;
@@ -527,7 +954,6 @@ class MonitoringController extends ChangeNotifier {
 
     await preferences.setString(_backendUrlKey, _backendUrl);
     await preferences.setString(_patientNameKey, _patientName);
-    await preferences.setString(_roomLabelKey, _roomLabel);
     await preferences.setString(_deviceLabelKey, _deviceLabel);
 
     if (_patientAge == null) {
@@ -554,6 +980,115 @@ class MonitoringController extends ChangeNotifier {
     }
   }
 
+  Future<void> _persistCareProfile() async {
+    final preferences = _preferences ?? await SharedPreferences.getInstance();
+    _preferences = preferences;
+    await preferences.setString(_medicalNotesKey, _medicalNotes);
+    await preferences.setString(_emergencyContactKey, _emergencyContact);
+    if (_photoPath == null || _photoPath!.trim().isEmpty) {
+      await preferences.remove(_photoPathKey);
+    } else {
+      await preferences.setString(_photoPathKey, _photoPath!);
+    }
+  }
+
+  Future<void> _persistHomeLocation() async {
+    final preferences = _preferences ?? await SharedPreferences.getInstance();
+    _preferences = preferences;
+    if (_homeLatitude == null || _homeLongitude == null) {
+      await preferences.remove(_homeLatitudeKey);
+      await preferences.remove(_homeLongitudeKey);
+    } else {
+      await preferences.setDouble(_homeLatitudeKey, _homeLatitude!);
+      await preferences.setDouble(_homeLongitudeKey, _homeLongitude!);
+    }
+  }
+
+  Future<void> _persistCaregiverAuth() async {
+    final preferences = _preferences ?? await SharedPreferences.getInstance();
+    _preferences = preferences;
+    if (_caregiverToken == null || _caregiverToken!.isEmpty) {
+      await preferences.remove(_caregiverTokenKey);
+      await preferences.remove(_caregiverNameKey);
+      await preferences.remove(_caregiverEmailAuthKey);
+      return;
+    }
+    await preferences.setString(_caregiverTokenKey, _caregiverToken!);
+    await preferences.setString(_caregiverNameKey, _caregiverName);
+    await preferences.setString(_caregiverEmailAuthKey, _caregiverAuthEmail);
+  }
+
+  void _ensureAutoRefresh() {
+    _autoRefreshTimer?.cancel();
+    _autoRefreshTimer = Timer.periodic(const Duration(seconds: 15), (_) {
+      if (_initialized) {
+        unawaited(refreshCaregiverData(silent: true));
+      }
+    });
+  }
+
+  void _syncAlarmWithAlerts() {
+    final hasSevereOpenAlert = _caregiverAlerts.any(
+          (alert) =>
+              alert.status != 'resolved' &&
+              (alert.severity == 'high_risk' || alert.severity == 'fall_detected'));
+
+    if (!hasSevereOpenAlert && _alarmSilencedByUser) {
+      _alarmSilencedByUser = false;
+    }
+
+    final shouldPlay = _notificationsEnabled && _alertViaAlarm && hasSevereOpenAlert && !_alarmSilencedByUser;
+
+    if (shouldPlay && !_alarmPlaying) {
+      FlutterRingtonePlayer().playAlarm(
+        looping: true,
+        volume: 1.0,
+        asAlarm: true,
+      );
+      _alarmPlaying = true;
+      return;
+    }
+
+    if (!shouldPlay) {
+      _stopAlarmIfPlaying();
+    }
+  }
+
+  void _stopAlarmIfPlaying() {
+    if (!_alarmPlaying) {
+      return;
+    }
+    FlutterRingtonePlayer().stop();
+    _alarmPlaying = false;
+  }
+
+  Future<void> triggerTestAlarm() async {
+    if (!_notificationsEnabled || !_alertViaAlarm) {
+      _lastError = 'Enable notifications and alarm sound first.';
+      notifyListeners();
+      return;
+    }
+
+    _alarmSilencedByUser = false;
+    if (!_alarmPlaying) {
+      FlutterRingtonePlayer().playAlarm(
+        looping: true,
+        volume: 1.0,
+        asAlarm: true,
+      );
+      _alarmPlaying = true;
+      _statusMessage = 'Test alarm is playing.';
+      notifyListeners();
+    }
+  }
+
+  Future<void> clearActiveAlarm() async {
+    _alarmSilencedByUser = true;
+    _stopAlarmIfPlaying();
+    _statusMessage = 'Alarm cleared.';
+    notifyListeners();
+  }
+
   Future<void> _ensureInitialized() async {
     if (!_initialized) {
       await initialize();
@@ -574,6 +1109,9 @@ class MonitoringController extends ChangeNotifier {
 
   @override
   void dispose() {
+    _autoRefreshTimer?.cancel();
+    _stopAlarmIfPlaying();
+    _locationSubscription?.cancel();
     unawaited(_sensorService.stop());
     super.dispose();
   }

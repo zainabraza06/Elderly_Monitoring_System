@@ -12,20 +12,17 @@ class PatientRecord {
     required this.id,
     required this.fullName,
     this.age,
-    this.roomLabel,
   });
 
   final String id;
   final String fullName;
   final int? age;
-  final String? roomLabel;
 
   factory PatientRecord.fromJson(Map<String, dynamic> json) {
     return PatientRecord(
       id: json['id'] as String,
       fullName: json['full_name'] as String? ?? 'Unknown Patient',
       age: json['age'] as int?,
-      roomLabel: json['room_label'] as String?,
     );
   }
 }
@@ -126,7 +123,6 @@ class LiveStatusModel {
     required this.score,
     required this.fallProbability,
     required this.lastMessage,
-    this.roomLabel,
     this.sessionId,
     this.deviceId,
     this.sampleRateHz,
@@ -136,7 +132,6 @@ class LiveStatusModel {
 
   final String patientId;
   final String patientName;
-  final String? roomLabel;
   final String? sessionId;
   final String? deviceId;
   final String severity;
@@ -153,7 +148,6 @@ class LiveStatusModel {
     return LiveStatusModel(
       patientId: json['patient_id'] as String? ?? '',
       patientName: json['patient_name'] as String? ?? 'Unknown Patient',
-      roomLabel: json['room_label'] as String?,
       sessionId: json['session_id'] as String?,
       deviceId: json['device_id'] as String?,
       severity: json['severity'] as String? ?? 'low',
@@ -177,6 +171,10 @@ class AlertRecordModel {
     required this.status,
     required this.message,
     required this.score,
+    this.createdAt,
+    this.acknowledgedAt,
+    this.resolvedAt,
+    this.manuallyTriggered = false,
   });
 
   final String id;
@@ -185,6 +183,10 @@ class AlertRecordModel {
   final String status;
   final String message;
   final double score;
+  final DateTime? createdAt;
+  final DateTime? acknowledgedAt;
+  final DateTime? resolvedAt;
+  final bool manuallyTriggered;
 
   factory AlertRecordModel.fromJson(Map<String, dynamic> json) {
     return AlertRecordModel(
@@ -194,6 +196,33 @@ class AlertRecordModel {
       status: json['status'] as String? ?? 'open',
       message: json['message'] as String? ?? 'Alert',
       score: (json['score'] as num?)?.toDouble() ?? 0.0,
+      createdAt: DateTime.tryParse(json['created_at'] as String? ?? ''),
+      acknowledgedAt: DateTime.tryParse(json['acknowledged_at'] as String? ?? ''),
+      resolvedAt: DateTime.tryParse(json['resolved_at'] as String? ?? ''),
+      manuallyTriggered: json['manually_triggered'] as bool? ?? false,
+    );
+  }
+}
+
+class SystemSummaryModel {
+  SystemSummaryModel({
+    required this.totalPatients,
+    required this.activeSessions,
+    required this.openAlerts,
+    this.lastEventAt,
+  });
+
+  final int totalPatients;
+  final int activeSessions;
+  final int openAlerts;
+  final DateTime? lastEventAt;
+
+  factory SystemSummaryModel.fromJson(Map<String, dynamic> json) {
+    return SystemSummaryModel(
+      totalPatients: json['total_patients'] as int? ?? 0,
+      activeSessions: json['active_sessions'] as int? ?? 0,
+      openAlerts: json['open_alerts'] as int? ?? 0,
+      lastEventAt: DateTime.tryParse(json['last_event_at'] as String? ?? ''),
     );
   }
 }
@@ -269,13 +298,11 @@ class TelemetrySnapshotModel {
     required this.receivedAt,
     required this.samplesInLastBatch,
     required this.latestSamples,
-    this.roomLabel,
     this.batteryLevel,
   });
 
   final String patientId;
   final String patientName;
-  final String? roomLabel;
   final String sessionId;
   final String deviceId;
   final String source;
@@ -292,7 +319,6 @@ class TelemetrySnapshotModel {
     return TelemetrySnapshotModel(
       patientId: json['patient_id'] as String? ?? '',
       patientName: json['patient_name'] as String? ?? 'Unknown Patient',
-      roomLabel: json['room_label'] as String?,
       sessionId: json['session_id'] as String? ?? '',
       deviceId: json['device_id'] as String? ?? '',
       source: json['source'] as String? ?? 'mobile',
@@ -339,6 +365,56 @@ class IngestResponseModel {
       telemetry: json['telemetry'] == null
           ? null
           : TelemetrySnapshotModel.fromJson(json['telemetry'] as Map<String, dynamic>),
+    );
+  }
+}
+
+class CaregiverAuthModel {
+  CaregiverAuthModel({
+    required this.accessToken,
+    required this.caregiverId,
+    required this.caregiverName,
+    required this.caregiverEmail,
+  });
+
+  final String accessToken;
+  final String caregiverId;
+  final String caregiverName;
+  final String caregiverEmail;
+
+  factory CaregiverAuthModel.fromJson(Map<String, dynamic> json) {
+    final caregiver = json['caregiver'] as Map<String, dynamic>? ?? const {};
+    return CaregiverAuthModel(
+      accessToken: json['access_token'] as String? ?? '',
+      caregiverId: caregiver['id'] as String? ?? '',
+      caregiverName: caregiver['full_name'] as String? ?? 'Caregiver',
+      caregiverEmail: caregiver['email'] as String? ?? '',
+    );
+  }
+}
+
+class GeneratedPatientCredentialModel {
+  GeneratedPatientCredentialModel({
+    required this.patientId,
+    required this.patientName,
+    required this.homeAddress,
+    required this.username,
+    required this.temporaryPassword,
+  });
+
+  final String patientId;
+  final String patientName;
+  final String homeAddress;
+  final String username;
+  final String temporaryPassword;
+
+  factory GeneratedPatientCredentialModel.fromJson(Map<String, dynamic> json) {
+    return GeneratedPatientCredentialModel(
+      patientId: json['patient_id'] as String? ?? '',
+      patientName: json['patient_name'] as String? ?? '',
+      homeAddress: json['home_address'] as String? ?? '',
+      username: json['username'] as String? ?? '',
+      temporaryPassword: json['temporary_password'] as String? ?? '',
     );
   }
 }

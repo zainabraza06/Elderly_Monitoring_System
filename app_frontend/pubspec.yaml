@@ -35,6 +35,10 @@ dependencies:
   http: ^1.2.2
   sensors_plus: ^6.1.1
   shared_preferences: ^2.3.2
+  flutter_ringtone_player: ^4.0.0+4
+  geolocator: ^14.0.2
+  flutter_map: ^8.3.0
+  latlong2: ^0.9.1
 
 dev_dependencies:
   flutter_test:

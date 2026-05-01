@@ -41,6 +41,107 @@ class HealthResponse(BaseModel):
     timestamp: datetime
 
 
+class CaregiverSignupRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    full_name: str = Field(..., min_length=1, max_length=120)
+    email: str = Field(..., min_length=5, max_length=180)
+    password: str = Field(..., min_length=6, max_length=120)
+
+    @field_validator("full_name", "email")
+    @classmethod
+    def strip_required_fields(cls, value: str) -> str:
+        clean = value.strip()
+        if not clean:
+            raise ValueError("Field cannot be blank.")
+        return clean
+
+
+class CaregiverLoginRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    email: str = Field(..., min_length=5, max_length=180)
+    password: str = Field(..., min_length=1, max_length=120)
+
+    @field_validator("email")
+    @classmethod
+    def strip_email(cls, value: str) -> str:
+        clean = value.strip()
+        if not clean:
+            raise ValueError("email cannot be blank.")
+        return clean
+
+
+class CaregiverRecord(BaseModel):
+    id: str
+    full_name: str
+    email: str
+    created_at: datetime
+
+
+class CaregiverAuthResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    caregiver: CaregiverRecord
+
+
+class PatientCredentialCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    caregiver_token: str = Field(..., min_length=6, max_length=256)
+    full_name: str = Field(..., min_length=1, max_length=120)
+    age: Optional[int] = Field(default=None, ge=0, le=130)
+    home_address: str = Field(..., min_length=1, max_length=240)
+    emergency_contact: Optional[str] = Field(default=None, max_length=120)
+    notes: Optional[str] = Field(default=None, max_length=500)
+
+    @field_validator("caregiver_token", "full_name", "home_address")
+    @classmethod
+    def strip_required_strings(cls, value: str) -> str:
+        clean = value.strip()
+        if not clean:
+            raise ValueError("Field cannot be blank.")
+        return clean
+
+
+class PatientCredentialRecord(BaseModel):
+    patient_id: str
+    patient_name: str
+    home_address: str
+    username: str
+    temporary_password: str
+    created_at: datetime
+
+
+class PatientLoginRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    username: str = Field(..., min_length=3, max_length=120)
+    password: str = Field(..., min_length=1, max_length=120)
+
+    @field_validator("username")
+    @classmethod
+    def strip_username(cls, value: str) -> str:
+        clean = value.strip()
+        if not clean:
+            raise ValueError("username cannot be blank.")
+        return clean
+
+
+class PatientAuthProfile(BaseModel):
+    patient_id: str
+    full_name: str
+    age: Optional[int] = None
+    home_address: str
+    emergency_contact: Optional[str] = None
+    caregiver_name: str
+    caregiver_email: str
+
+
+class PatientAuthResponse(BaseModel):
+    patient_profile: PatientAuthProfile
+
+
 class APIErrorResponse(BaseModel):
     code: str
     message: str
@@ -54,7 +155,6 @@ class PatientCreate(BaseModel):
 
     full_name: str = Field(..., min_length=1, max_length=120)
     age: Optional[int] = Field(default=None, ge=0, le=130)
-    room_label: Optional[str] = Field(default=None, max_length=80)
     emergency_contact: Optional[str] = Field(default=None, max_length=120)
     notes: Optional[str] = Field(default=None, max_length=500)
 
@@ -71,7 +171,7 @@ class PatientRecord(BaseModel):
     id: str
     full_name: str
     age: Optional[int] = None
-    room_label: Optional[str] = None
+    home_address: Optional[str] = None
     emergency_contact: Optional[str] = None
     notes: Optional[str] = None
     created_at: datetime
@@ -205,7 +305,6 @@ class DetectionResult(BaseModel):
 class PatientLiveStatus(BaseModel):
     patient_id: str
     patient_name: str
-    room_label: Optional[str] = None
     session_id: Optional[str] = None
     device_id: Optional[str] = None
     severity: AlertSeverity = AlertSeverity.low
@@ -303,7 +402,6 @@ class SensorBatchIn(BaseModel):
 class TelemetrySnapshot(BaseModel):
     patient_id: str
     patient_name: str
-    room_label: Optional[str] = None
     session_id: str
     device_id: str
     source: str

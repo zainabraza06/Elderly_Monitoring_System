@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import secrets
 from collections import deque
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -11,6 +12,10 @@ from .schemas import (
     AlertRecord,
     AlertSeverity,
     AlertStatus,
+    CaregiverAuthResponse,
+    CaregiverLoginRequest,
+    CaregiverRecord,
+    CaregiverSignupRequest,
     DetectorConfig,
     DetectorConfigUpdate,
     DeviceCreate,
@@ -18,6 +23,11 @@ from .schemas import (
     ManualAlertCreate,
     MonitorEvent,
     PatientCreate,
+    PatientCredentialCreate,
+    PatientCredentialRecord,
+    PatientAuthProfile,
+    PatientAuthResponse,
+    PatientLoginRequest,
     PatientLiveStatus,
     PatientRecord,
     SensorBatchIn,
@@ -50,6 +60,11 @@ class BackendStore:
         self.sessions: dict[str, SessionRecord] = {}
         self.alerts: dict[str, AlertRecord] = {}
         self.live_status: dict[str, PatientLiveStatus] = {}
+        self.caregivers: dict[str, CaregiverRecord] = {}
+        self.caregiver_passwords: dict[str, str] = {}
+        self.caregiver_by_email: dict[str, str] = {}
+        self.auth_tokens: dict[str, str] = {}
+        self.patient_credentials: dict[str, dict] = {}
         self.recent_events: deque[MonitorEvent] = deque(maxlen=recent_event_limit)
         self.telemetry_snapshots: dict[str, TelemetrySnapshot] = {}
         self.recent_telemetry: deque[TelemetrySnapshot] = deque(maxlen=120)
@@ -81,6 +96,126 @@ class BackendStore:
             return None
         return max(alerts, key=lambda item: item.created_at)
 
+    def _resolve_caregiver_id(self, token: str) -> str:
+        caregiver_id = self.auth_tokens.get(token)
+        if caregiver_id is None or caregiver_id not in self.caregivers:
+            raise ValueError("Caregiver authentication is invalid.")
+        return caregiver_id
+
+    async def signup_caregiver(self, data: CaregiverSignupRequest) -> CaregiverAuthResponse:
+        async with self._lock:
+            email_key = data.email.strip().lower()
+            if email_key in self.caregiver_by_email:
+                raise ValueError("A caregiver account already exists for this email.")
+
+            caregiver = CaregiverRecord(
+                id=f"car_{uuid4().hex[:10]}",
+                full_name=data.full_name.strip(),
+                email=data.email.strip(),
+                created_at=utcnow(),
+            )
+            self.caregivers[caregiver.id] = caregiver
+            self.caregiver_by_email[email_key] = caregiver.id
+            self.caregiver_passwords[caregiver.id] = data.password
+            access_token = f"cg_{secrets.token_urlsafe(24)}"
+            self.auth_tokens[access_token] = caregiver.id
+            self._new_event(
+                "caregiver.signed_up",
+                {"caregiver_id": caregiver.id, "email": caregiver.email},
+            )
+            return CaregiverAuthResponse(access_token=access_token, caregiver=caregiver)
+
+    async def login_caregiver(self, data: CaregiverLoginRequest) -> CaregiverAuthResponse:
+        async with self._lock:
+            email_key = data.email.strip().lower()
+            caregiver_id = self.caregiver_by_email.get(email_key)
+            if caregiver_id is None:
+                raise ValueError("Invalid caregiver email or password.")
+
+            if self.caregiver_passwords.get(caregiver_id) != data.password:
+                raise ValueError("Invalid caregiver email or password.")
+
+            caregiver = self.caregivers[caregiver_id]
+            access_token = f"cg_{secrets.token_urlsafe(24)}"
+            self.auth_tokens[access_token] = caregiver_id
+            self._new_event(
+                "caregiver.logged_in",
+                {"caregiver_id": caregiver.id, "email": caregiver.email},
+            )
+            return CaregiverAuthResponse(access_token=access_token, caregiver=caregiver)
+
+    async def generate_patient_credentials(self, data: PatientCredentialCreate) -> PatientCredentialRecord:
+        async with self._lock:
+            caregiver_id = self._resolve_caregiver_id(data.caregiver_token)
+            caregiver = self.caregivers[caregiver_id]
+
+            patient = PatientRecord(
+                id=f"pat_{uuid4().hex[:10]}",
+                full_name=data.full_name.strip(),
+                age=data.age,
+                home_address=data.home_address.strip(),
+                emergency_contact=data.emergency_contact,
+                notes=data.notes,
+                created_at=utcnow(),
+            )
+            self.patients[patient.id] = patient
+            self.live_status[patient.id] = PatientLiveStatus(
+                patient_id=patient.id,
+                patient_name=patient.full_name,
+            )
+
+            safe_name = "".join(ch for ch in patient.full_name.lower() if ch.isalnum())
+            safe_name = safe_name[:8] or "patient"
+            username = f"{safe_name}_{uuid4().hex[:4]}"
+            temp_password = secrets.token_hex(4)
+            self.patient_credentials[username] = {
+                "password": temp_password,
+                "patient_id": patient.id,
+                "caregiver_id": caregiver_id,
+                "home_address": patient.home_address or data.home_address.strip(),
+            }
+
+            self._new_event(
+                "patient.credentials.generated",
+                {
+                    "caregiver_id": caregiver_id,
+                    "caregiver_email": caregiver.email,
+                    "patient_id": patient.id,
+                    "username": username,
+                },
+            )
+            return PatientCredentialRecord(
+                patient_id=patient.id,
+                patient_name=patient.full_name,
+                home_address=patient.home_address or data.home_address.strip(),
+                username=username,
+                temporary_password=temp_password,
+                created_at=utcnow(),
+            )
+
+    async def login_patient(self, data: PatientLoginRequest) -> PatientAuthResponse:
+        async with self._lock:
+            cred = self.patient_credentials.get(data.username.strip())
+            if cred is None or cred.get("password") != data.password:
+                raise ValueError("Invalid patient username or password.")
+
+            patient = self.patients.get(cred["patient_id"])
+            caregiver = self.caregivers.get(cred["caregiver_id"])
+            if patient is None or caregiver is None:
+                raise ValueError("Patient account linkage is incomplete.")
+
+            return PatientAuthResponse(
+                patient_profile=PatientAuthProfile(
+                    patient_id=patient.id,
+                    full_name=patient.full_name,
+                    age=patient.age,
+                    home_address=patient.home_address or cred["home_address"],
+                    emergency_contact=patient.emergency_contact,
+                    caregiver_name=caregiver.full_name,
+                    caregiver_email=caregiver.email,
+                )
+            )
+
     async def create_patient(self, data: PatientCreate) -> tuple[PatientRecord, MonitorEvent]:
         async with self._lock:
             patient = PatientRecord(
@@ -92,7 +227,6 @@ class BackendStore:
             self.live_status[patient.id] = PatientLiveStatus(
                 patient_id=patient.id,
                 patient_name=patient.full_name,
-                room_label=patient.room_label,
             )
             event = self._new_event("patient.created", model_to_dict(patient))
             return patient, event
@@ -179,7 +313,6 @@ class BackendStore:
                 live.last_message = "Monitoring session stopped."
                 if patient:
                     live.patient_name = patient.full_name
-                    live.room_label = patient.room_label
                 events.append(self._new_event("patient.live.updated", model_to_dict(live)))
 
             return session, events
@@ -240,12 +373,10 @@ class BackendStore:
                 live = PatientLiveStatus(
                     patient_id=payload.patient_id,
                     patient_name=patient.full_name,
-                    room_label=patient.room_label,
                 )
                 self.live_status[payload.patient_id] = live
 
             live.patient_name = patient.full_name
-            live.room_label = patient.room_label
             live.session_id = payload.session_id
             live.device_id = payload.device_id
             live.sample_rate_hz = payload.sampling_rate_hz
@@ -266,7 +397,6 @@ class BackendStore:
             telemetry = TelemetrySnapshot(
                 patient_id=payload.patient_id,
                 patient_name=patient.full_name,
-                room_label=patient.room_label,
                 session_id=payload.session_id,
                 device_id=payload.device_id,
                 source=payload.source,

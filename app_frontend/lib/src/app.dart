@@ -1,14 +1,12 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
+import 'package:flutter_map/flutter_map.dart';
+import 'package:latlong2/latlong.dart';
 
 import 'models.dart';
 import 'monitoring_controller.dart';
 
 class ElderlyMonitorApp extends StatefulWidget {
-  const ElderlyMonitorApp({
-    super.key,
-    this.controller,
-  });
+  const ElderlyMonitorApp({super.key, this.controller});
 
   final MonitoringController? controller;
 
@@ -41,119 +39,47 @@ class _ElderlyMonitorAppState extends State<ElderlyMonitorApp> {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'Elderly Monitor',
+      title: 'Care Monitor',
       theme: ThemeData(
         useMaterial3: true,
-        scaffoldBackgroundColor: const Color(0xFFF4EEE4),
+        scaffoldBackgroundColor: const Color(0xFFF5F7FA),
         colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF0F8579),
+          seedColor: const Color(0xFF0A7FA6),
           brightness: Brightness.light,
-        ),
-        textTheme: ThemeData.light().textTheme.apply(
-              bodyColor: const Color(0xFF163126),
-              displayColor: const Color(0xFF163126),
-            ),
-        cardTheme: CardThemeData(
-          color: Colors.white,
-          elevation: 0,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(24),
-            side: const BorderSide(color: Color(0xFFE4D8C8)),
-          ),
-        ),
-        inputDecorationTheme: InputDecorationTheme(
-          filled: true,
-          fillColor: const Color(0xFFF8F4EE),
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(18),
-            borderSide: const BorderSide(color: Color(0xFFD9CBB9)),
-          ),
-          enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(18),
-            borderSide: const BorderSide(color: Color(0xFFD9CBB9)),
-          ),
-          focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(18),
-            borderSide: const BorderSide(
-              color: Color(0xFF0F8579),
-              width: 1.4,
-            ),
-          ),
-          contentPadding: const EdgeInsets.symmetric(
-            horizontal: 16,
-            vertical: 16,
-          ),
         ),
       ),
       home: FutureBuilder<void>(
         future: _initializationFuture,
         builder: (context, snapshot) {
           if (snapshot.connectionState != ConnectionState.done) {
-            return const _LoadingScreen();
+            return const Scaffold(body: Center(child: CircularProgressIndicator()));
           }
-          return MonitoringHomePage(controller: _controller);
+          return MonitoringShell(controller: _controller);
         },
       ),
     );
   }
 }
 
-class MonitoringHomePage extends StatefulWidget {
-  const MonitoringHomePage({
-    super.key,
-    required this.controller,
-  });
+class MonitoringShell extends StatefulWidget {
+  const MonitoringShell({super.key, required this.controller});
 
   final MonitoringController controller;
 
   @override
-  State<MonitoringHomePage> createState() => _MonitoringHomePageState();
+  State<MonitoringShell> createState() => _MonitoringShellState();
 }
 
-class _MonitoringHomePageState extends State<MonitoringHomePage> {
-  late final TextEditingController _backendUrlController;
-  late final TextEditingController _patientNameController;
-  late final TextEditingController _patientAgeController;
-  late final TextEditingController _roomLabelController;
-  late final TextEditingController _deviceLabelController;
+class _MonitoringShellState extends State<MonitoringShell> {
+  int _tabIndex = 0;
+  bool _patientMode = false;
 
   @override
   void initState() {
     super.initState();
-    _backendUrlController = TextEditingController(text: widget.controller.backendUrl);
-    _patientNameController = TextEditingController(text: widget.controller.patientName);
-    _patientAgeController = TextEditingController(
-      text: widget.controller.patientAge?.toString() ?? '',
-    );
-    _roomLabelController = TextEditingController(text: widget.controller.roomLabel);
-    _deviceLabelController = TextEditingController(text: widget.controller.deviceLabel);
-  }
-
-  @override
-  void dispose() {
-    _backendUrlController.dispose();
-    _patientNameController.dispose();
-    _patientAgeController.dispose();
-    _roomLabelController.dispose();
-    _deviceLabelController.dispose();
-    super.dispose();
-  }
-
-  Future<void> _saveSetup() async {
-    await widget.controller.saveSetup(
-      backendUrl: _backendUrlController.text,
-      patientName: _patientNameController.text,
-      patientAgeText: _patientAgeController.text,
-      roomLabel: _roomLabelController.text,
-      deviceLabel: _deviceLabelController.text,
-    );
-  }
-
-  Future<void> _saveAndStart() async {
-    await _saveSetup();
-    if (widget.controller.lastError == null) {
-      await widget.controller.startMonitoring();
-    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      widget.controller.refreshCaregiverData(silent: true);
+    });
   }
 
   @override
@@ -162,544 +88,968 @@ class _MonitoringHomePageState extends State<MonitoringHomePage> {
       animation: widget.controller,
       builder: (context, _) {
         final controller = widget.controller;
+        if (!controller.isCaregiverAuthenticated) {
+          return CaregiverAuthScreen(controller: controller);
+        }
+        final body = _patientMode
+            ? PatientModeHome(controller: controller)
+            : _buildCaregiverTabs(controller);
+
         return Scaffold(
-          body: Container(
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: <Color>[
-                  Color(0xFFE2F2EA),
-                  Color(0xFFF4EEE4),
-                  Color(0xFFF9F6F1),
-                ],
+          appBar: AppBar(
+            title: Text(_patientMode ? 'Patient Mode' : 'Caregiver Console'),
+            actions: [
+              Padding(
+                padding: const EdgeInsets.only(right: 12),
+                child: SegmentedButton<bool>(
+                  segments: const [
+                    ButtonSegment<bool>(value: false, label: Text('Caregiver')),
+                    ButtonSegment<bool>(value: true, label: Text('Patient')),
+                  ],
+                  selected: {_patientMode},
+                  onSelectionChanged: (value) {
+                    setState(() => _patientMode = value.first);
+                  },
+                ),
               ),
-            ),
-            child: SafeArea(
-              child: Stack(
-                children: <Widget>[
-                  SingleChildScrollView(
-                    padding: const EdgeInsets.fromLTRB(20, 18, 20, 28),
-                    child: Center(
-                      child: ConstrainedBox(
-                        constraints: const BoxConstraints(maxWidth: 760),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: <Widget>[
-                            _HeroPanel(controller: controller),
-                            const SizedBox(height: 18),
-                            if (controller.lastError != null) ...<Widget>[
-                              _BannerMessage(
-                                title: 'Attention Needed',
-                                message: controller.lastError!,
-                                backgroundColor: const Color(0xFFFCE2DF),
-                                accentColor: const Color(0xFFB53B34),
+            ],
+          ),
+          body: Stack(
+            children: [
+              Column(
+                children: [
+                  if (controller.isAlarmPlaying)
+                    Container(
+                      width: double.infinity,
+                      color: const Color(0xFFB53B34),
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                      child: SafeArea(
+                        bottom: false,
+                        child: Row(
+                          children: [
+                            const Icon(Icons.notification_important, color: Colors.white),
+                            const SizedBox(width: 8),
+                            const Expanded(
+                              child: Text(
+                                'Emergency alarm is active',
+                                style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700),
                               ),
-                              const SizedBox(height: 14),
-                            ],
-                            _BannerMessage(
-                              title: 'Live Status',
-                              message: controller.statusMessage,
-                              backgroundColor: const Color(0xFFE8F4F1),
-                              accentColor: const Color(0xFF0F8579),
                             ),
-                            const SizedBox(height: 18),
-                            _buildSetupCard(controller),
-                            const SizedBox(height: 18),
-                            _buildSensorAccessCard(controller),
-                            const SizedBox(height: 18),
-                            _buildSessionCard(controller),
-                            const SizedBox(height: 18),
-                            _buildDetectionCard(controller),
-                            const SizedBox(height: 18),
-                            _buildEmergencyCard(controller),
+                            TextButton(
+                              onPressed: controller.clearActiveAlarm,
+                              style: TextButton.styleFrom(foregroundColor: Colors.white),
+                              child: const Text('Clear'),
+                            ),
                           ],
                         ),
                       ),
                     ),
-                  ),
-                  if (controller.isBusy)
-                    const Positioned(
-                      left: 0,
-                      right: 0,
-                      top: 0,
-                      child: LinearProgressIndicator(minHeight: 3),
-                    ),
+                  Expanded(child: body),
                 ],
               ),
-            ),
+              if (controller.isBusy)
+                const Align(
+                  alignment: Alignment.topCenter,
+                  child: LinearProgressIndicator(minHeight: 3),
+                ),
+            ],
           ),
+          bottomNavigationBar: _patientMode
+              ? null
+              : NavigationBar(
+                  selectedIndex: _tabIndex,
+                  onDestinationSelected: (value) => setState(() => _tabIndex = value),
+                  destinations: const [
+                    NavigationDestination(icon: Icon(Icons.home_outlined), label: 'Home'),
+                    NavigationDestination(icon: Icon(Icons.badge_outlined), label: 'Enrollment'),
+                    NavigationDestination(icon: Icon(Icons.monitor_heart_outlined), label: 'Live'),
+                    NavigationDestination(icon: Icon(Icons.notification_important_outlined), label: 'Alerts'),
+                    NavigationDestination(icon: Icon(Icons.insights_outlined), label: 'Insights'),
+                    NavigationDestination(icon: Icon(Icons.person_outline), label: 'Profile'),
+                    NavigationDestination(icon: Icon(Icons.settings_outlined), label: 'Settings'),
+                  ],
+                ),
         );
       },
     );
   }
 
-  Widget _buildSetupCard(MonitoringController controller) {
-    return _CardShell(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: <Widget>[
-          const _SectionHeader(
-            title: 'Patient Setup',
-            subtitle:
-                'Save the phone configuration that will be used for live motion detection.',
-          ),
-          const SizedBox(height: 18),
-          LayoutBuilder(
-            builder: (context, constraints) {
-              final useTwoColumns = constraints.maxWidth > 640;
-              if (useTwoColumns) {
-                return Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: <Widget>[
-                    Expanded(child: _buildPrimarySetupFields(controller)),
-                    const SizedBox(width: 14),
-                    Expanded(child: _buildSecondarySetupFields(controller)),
-                  ],
-                );
-              }
-              return Column(
-                children: <Widget>[
-                  _buildPrimarySetupFields(controller),
-                  const SizedBox(height: 14),
-                  _buildSecondarySetupFields(controller),
+  Widget _buildCaregiverTabs(MonitoringController controller) {
+    final tabs = <Widget>[
+      CaregiverDashboard(controller: controller, openAlerts: () => setState(() => _tabIndex = 3)),
+      CaregiverEnrollmentScreen(controller: controller),
+      LiveMonitoringScreen(controller: controller),
+      AlertsScreen(controller: controller),
+      InsightsScreen(controller: controller),
+      PatientProfileScreen(controller: controller),
+      SettingsScreen(controller: controller),
+    ];
+    return tabs[_tabIndex];
+  }
+}
+
+class CaregiverAuthScreen extends StatefulWidget {
+  const CaregiverAuthScreen({super.key, required this.controller});
+
+  final MonitoringController controller;
+
+  @override
+  State<CaregiverAuthScreen> createState() => _CaregiverAuthScreenState();
+}
+
+class _CaregiverAuthScreenState extends State<CaregiverAuthScreen> {
+  bool _isSignup = true;
+  final _nameCtrl = TextEditingController();
+  final _emailCtrl = TextEditingController();
+  final _passwordCtrl = TextEditingController();
+
+  @override
+  void dispose() {
+    _nameCtrl.dispose();
+    _emailCtrl.dispose();
+    _passwordCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    if (_isSignup) {
+      await widget.controller.caregiverSignup(
+        fullName: _nameCtrl.text,
+        email: _emailCtrl.text,
+        password: _passwordCtrl.text,
+      );
+    } else {
+      await widget.controller.caregiverLogin(
+        email: _emailCtrl.text,
+        password: _passwordCtrl.text,
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = widget.controller;
+    return Scaffold(
+      appBar: AppBar(title: const Text('Caregiver Access')),
+      body: ListView(
+        padding: const EdgeInsets.all(20),
+        children: [
+          Container(
+            padding: const EdgeInsets.all(18),
+            decoration: _cardDecoration(),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _isSignup ? 'Create caregiver account' : 'Caregiver sign in',
+                  style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(height: 12),
+                if (_isSignup) ...[
+                  TextField(
+                    controller: _nameCtrl,
+                    decoration: const InputDecoration(labelText: 'Full Name'),
+                  ),
+                  const SizedBox(height: 10),
                 ],
-              );
-            },
+                TextField(
+                  controller: _emailCtrl,
+                  keyboardType: TextInputType.emailAddress,
+                  decoration: const InputDecoration(labelText: 'Email'),
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: _passwordCtrl,
+                  obscureText: true,
+                  decoration: const InputDecoration(labelText: 'Password'),
+                ),
+                const SizedBox(height: 14),
+                FilledButton(
+                  onPressed: controller.isBusy ? null : _submit,
+                  child: Text(_isSignup ? 'Sign Up as Caregiver' : 'Sign In'),
+                ),
+                const SizedBox(height: 8),
+                TextButton(
+                  onPressed: () => setState(() => _isSignup = !_isSignup),
+                  child: Text(
+                    _isSignup ? 'Already have an account? Sign in' : 'Need an account? Sign up',
+                  ),
+                ),
+              ],
+            ),
           ),
+          if (controller.lastError != null) ...[
+            const SizedBox(height: 12),
+            _StatusBanner(
+              color: const Color(0xFFB53B34),
+              title: 'Sign-in Error',
+              message: controller.lastError!,
+            ),
+          ],
         ],
       ),
     );
   }
+}
 
-  Widget _buildSessionCard(MonitoringController controller) {
-    return _CardShell(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: <Widget>[
-          const _SectionHeader(
-            title: 'Live Session',
-            subtitle:
-                'Start or stop sensor streaming, and keep an eye on the current backend session.',
-          ),
-          const SizedBox(height: 18),
-          Wrap(
-            spacing: 12,
-            runSpacing: 12,
-            children: <Widget>[
-              _MetricChip(
-                label: 'Patient ID',
-                value: controller.patientId ?? 'Not created yet',
+class CaregiverEnrollmentScreen extends StatefulWidget {
+  const CaregiverEnrollmentScreen({super.key, required this.controller});
+
+  final MonitoringController controller;
+
+  @override
+  State<CaregiverEnrollmentScreen> createState() => _CaregiverEnrollmentScreenState();
+}
+
+class _CaregiverEnrollmentScreenState extends State<CaregiverEnrollmentScreen> {
+  final _nameCtrl = TextEditingController();
+  final _ageCtrl = TextEditingController();
+  final _homeCtrl = TextEditingController();
+  final _contactCtrl = TextEditingController();
+  final _notesCtrl = TextEditingController();
+
+  @override
+  void dispose() {
+    _nameCtrl.dispose();
+    _ageCtrl.dispose();
+    _homeCtrl.dispose();
+    _contactCtrl.dispose();
+    _notesCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _generate() async {
+    await widget.controller.generatePatientCredentials(
+      fullName: _nameCtrl.text,
+      ageText: _ageCtrl.text,
+      homeAddress: _homeCtrl.text,
+      emergencyContact: _contactCtrl.text,
+      notes: _notesCtrl.text,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = widget.controller;
+    final generated = controller.lastGeneratedCredential;
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        _StatusBanner(
+          color: const Color(0xFF2A7DA8),
+          title: 'Patient Enrollment',
+          message: 'Create patient credentials securely for patient app access.',
+        ),
+        const SizedBox(height: 12),
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: _cardDecoration(),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              TextField(controller: _nameCtrl, decoration: const InputDecoration(labelText: 'Patient Name')),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _ageCtrl,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(labelText: 'Age'),
               ),
-              _MetricChip(
-                label: 'Device ID',
-                value: controller.deviceId ?? 'Not created yet',
+              const SizedBox(height: 8),
+              TextField(controller: _homeCtrl, decoration: const InputDecoration(labelText: 'Home Address')),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _contactCtrl,
+                decoration: const InputDecoration(labelText: 'Emergency Contact'),
               ),
-              _MetricChip(
-                label: 'Session ID',
-                value: controller.sessionId ?? 'No active session',
-              ),
-              _MetricChip(
-                label: 'Last Upload',
-                value: _formatTimestamp(controller.lastTransmissionAt),
-              ),
-            ],
-          ),
-          const SizedBox(height: 18),
-          Wrap(
-            spacing: 10,
-            runSpacing: 10,
-            children: <Widget>[
+              const SizedBox(height: 8),
+              TextField(controller: _notesCtrl, decoration: const InputDecoration(labelText: 'Notes')),
+              const SizedBox(height: 12),
               FilledButton.icon(
-                onPressed:
-                    controller.isStreaming || controller.isBusy ? null : _saveAndStart,
-                icon: const Icon(Icons.play_arrow_rounded),
-                label: const Text('Start Monitoring'),
-              ),
-              OutlinedButton.icon(
-                onPressed: controller.isStreaming && !controller.isBusy
-                    ? controller.stopMonitoring
-                    : null,
-                icon: const Icon(Icons.stop_circle_outlined),
-                label: const Text('Stop Monitoring'),
+                onPressed: controller.isBusy ? null : _generate,
+                icon: const Icon(Icons.vpn_key_outlined),
+                label: const Text('Generate Credentials for Patient'),
               ),
             ],
           ),
+        ),
+        if (generated != null) ...[
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: _cardDecoration(),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Generated Patient Access', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 18)),
+                const SizedBox(height: 8),
+                _StatCard(label: 'Patient', value: generated.patientName),
+                const SizedBox(height: 8),
+                _StatCard(label: 'Username', value: generated.username),
+                const SizedBox(height: 8),
+                _StatCard(label: 'Temporary Password', value: generated.temporaryPassword),
+                const SizedBox(height: 8),
+                const Text(
+                  'Share these credentials securely with the patient.',
+                  style: TextStyle(color: Color(0xFF5D7385)),
+                ),
+              ],
+            ),
+          ),
         ],
-      ),
+      ],
     );
   }
+}
 
-  Widget _buildSensorAccessCard(MonitoringController controller) {
-    final sensorStatus = controller.sensorAccessStatus;
-    final latestTelemetry = controller.latestTelemetry;
+class CaregiverDashboard extends StatelessWidget {
+  const CaregiverDashboard({super.key, required this.controller, required this.openAlerts});
 
-    return _CardShell(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: <Widget>[
-          const _SectionHeader(
-            title: 'Sensor Access',
-            subtitle:
-                'Check that the phone can read the accelerometer and gyroscope before starting live monitoring.',
+  final MonitoringController controller;
+  final VoidCallback openAlerts;
+
+  @override
+  Widget build(BuildContext context) {
+    final live = controller.liveStatus;
+    final severity = live?.severity ?? 'low';
+    final risk = ((live?.score ?? controller.lastDetection?.score ?? 0) * 100).round();
+    final statusText = live?.lastMessage ?? 'Patient is stable.';
+    final movement = (controller.lastDetection?.fallProbability ?? live?.fallProbability ?? 0) * 100;
+
+    return RefreshIndicator(
+      onRefresh: () => controller.refreshCaregiverData(),
+      child: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          _PatientHeroCard(
+            name: controller.patientName.isEmpty ? 'Monitored Patient' : controller.patientName,
+            age: controller.patientAge == null ? 'Age not set' : '${controller.patientAge} years',
+            severity: severity,
+            lastUpdated: _formatDateTime(controller.lastTransmissionAt),
           ),
-          const SizedBox(height: 18),
-          Wrap(
-            spacing: 12,
-            runSpacing: 12,
-            children: <Widget>[
-              _SensorStatusTile(
-                label: 'Accelerometer',
-                isReady: sensorStatus?.accelerometerAvailable ?? false,
+          const SizedBox(height: 12),
+          _StatusBanner(
+            color: _severityColor(severity),
+            title: _severityLabel(severity),
+            message: statusText,
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Expanded(child: _StatCard(label: 'Risk Score', value: '$risk%')),
+              const SizedBox(width: 10),
+              Expanded(child: _StatCard(label: 'Movement Activity', value: '${movement.toStringAsFixed(0)}%')),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: _StatCard(
+                  label: 'Last Movement',
+                  value: _formatDateTime(controller.lastTransmissionAt),
+                ),
               ),
-              _SensorStatusTile(
-                label: 'Gyroscope',
-                isReady: sensorStatus?.gyroscopeAvailable ?? false,
-              ),
-              _MetricChip(
-                label: 'Last Checked',
-                value: sensorStatus == null
-                    ? 'Not checked'
-                    : _formatTimestamp(sensorStatus.checkedAt),
-              ),
-              _MetricChip(
-                label: 'Latest Batch',
-                value: latestTelemetry == null
-                    ? 'No telemetry yet'
-                    : '${latestTelemetry.samplesInLastBatch} samples',
+              const SizedBox(width: 10),
+              Expanded(
+                child: _MiniTrendCard(value: movement / 100),
               ),
             ],
           ),
           const SizedBox(height: 16),
-          Wrap(
-            spacing: 10,
-            runSpacing: 10,
-            children: <Widget>[
-              FilledButton.icon(
-                onPressed: controller.isBusy
-                    ? null
-                    : () => controller.refreshSensorStatus(),
-                icon: const Icon(Icons.sensors_outlined),
-                label: const Text('Check Sensors'),
-              ),
-              if (latestTelemetry != null)
-                OutlinedButton.icon(
-                  onPressed: null,
-                  icon: const Icon(Icons.memory_outlined),
-                  label: Text(
-                    'Source ${latestTelemetry.source}',
-                  ),
-                ),
-            ],
-          ),
-          const SizedBox(height: 14),
-          const Text(
-            'On some devices the operating system shows the motion access prompt the first time sensor streams are touched. Keep the app open and allow access if prompted.',
-            style: TextStyle(
-              color: Color(0xFF51645C),
-              height: 1.4,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildDetectionCard(MonitoringController controller) {
-    return _CardShell(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: <Widget>[
-          const _SectionHeader(
-            title: 'Risk Detection',
-            subtitle:
-                'Live severity updates from the FastAPI backend appear here after sensor batches are processed.',
-          ),
-          const SizedBox(height: 18),
-          _DetectionPanel(
-            detection: controller.lastDetection,
-            liveStatus: controller.liveStatus,
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildEmergencyCard(MonitoringController controller) {
-    return _CardShell(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: <Widget>[
-          const _SectionHeader(
-            title: 'Emergency Trigger',
-            subtitle:
-                'Use this when the user needs immediate attention regardless of automatic classification.',
-          ),
-          const SizedBox(height: 18),
-          _EmergencyPanel(controller: controller),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildPrimarySetupFields(MonitoringController controller) {
-    return Column(
-      children: <Widget>[
-        TextField(
-          controller: _backendUrlController,
-          enabled: !controller.isStreaming,
-          keyboardType: TextInputType.url,
-          decoration: const InputDecoration(
-            labelText: 'Backend URL',
-            hintText: 'http://10.0.2.2:8000',
-          ),
-        ),
-        const SizedBox(height: 12),
-        TextField(
-          controller: _patientNameController,
-          enabled: !controller.isStreaming,
-          decoration: const InputDecoration(
-            labelText: 'Patient Name',
-            hintText: 'Abdul Hameed',
-          ),
-        ),
-        const SizedBox(height: 12),
-        TextField(
-          controller: _patientAgeController,
-          enabled: !controller.isStreaming,
-          keyboardType: TextInputType.number,
-          inputFormatters: <TextInputFormatter>[
-            FilteringTextInputFormatter.digitsOnly,
-          ],
-          decoration: const InputDecoration(
-            labelText: 'Patient Age',
-            hintText: '72',
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildSecondarySetupFields(MonitoringController controller) {
-    return Column(
-      children: <Widget>[
-        TextField(
-          controller: _roomLabelController,
-          enabled: !controller.isStreaming,
-          decoration: const InputDecoration(
-            labelText: 'Room Label',
-            hintText: 'Room 204',
-          ),
-        ),
-        const SizedBox(height: 12),
-        TextField(
-          controller: _deviceLabelController,
-          enabled: !controller.isStreaming,
-          decoration: const InputDecoration(
-            labelText: 'Device Label',
-            hintText: 'Ward Phone A',
-          ),
-        ),
-        const SizedBox(height: 12),
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            color: const Color(0xFFF8F4EE),
-            borderRadius: BorderRadius.circular(18),
-            border: Border.all(color: const Color(0xFFD9CBB9)),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              const Text(
-                'Connection Summary',
-                style: TextStyle(
-                  fontWeight: FontWeight.w700,
-                  color: Color(0xFF163126),
+          Row(
+            children: [
+              Expanded(
+                child: FilledButton.icon(
+                  onPressed: () => controller.refreshCaregiverData(),
+                  icon: const Icon(Icons.visibility_outlined),
+                  label: const Text('View Details'),
                 ),
               ),
-              const SizedBox(height: 10),
-              _InfoRow(
-                label: 'Backend',
-                value: controller.backendReachable ? 'Reachable' : 'Offline or not checked',
-              ),
-              _InfoRow(
-                label: 'Ready',
-                value: controller.isReady ? 'Yes' : 'Not yet',
-              ),
-              _InfoRow(
-                label: 'Streaming',
-                value: controller.isStreaming ? 'Active' : 'Stopped',
+              const SizedBox(width: 10),
+              Expanded(
+                child: FilledButton.icon(
+                  style: FilledButton.styleFrom(backgroundColor: const Color(0xFFC2453F)),
+                  onPressed: openAlerts,
+                  icon: const Icon(Icons.warning_amber_rounded),
+                  label: const Text('Emergency Actions'),
+                ),
               ),
             ],
           ),
-        ),
-        const SizedBox(height: 16),
-        Wrap(
-          spacing: 10,
-          runSpacing: 10,
-          children: <Widget>[
-            FilledButton.icon(
-              onPressed: controller.isStreaming || controller.isBusy ? null : _saveSetup,
-              icon: const Icon(Icons.save_outlined),
-              label: const Text('Save Setup'),
-            ),
-            OutlinedButton.icon(
-              onPressed: controller.isBusy
-                  ? null
-                  : () => controller.refreshBackendReachability(),
-              icon: const Icon(Icons.health_and_safety_outlined),
-              label: const Text('Check Backend'),
-            ),
-          ],
-        ),
-        const SizedBox(height: 14),
-        const Text(
-          'Tip: use 10.0.2.2 for the Android emulator, 127.0.0.1 for the iOS simulator, and your computer\'s LAN IP for a physical phone.',
-          style: TextStyle(
-            color: Color(0xFF51645C),
-            height: 1.4,
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _LoadingScreen extends StatelessWidget {
-  const _LoadingScreen();
-
-  @override
-  Widget build(BuildContext context) {
-    return const Scaffold(
-      body: Center(
-        child: CircularProgressIndicator(),
+        ],
       ),
     );
   }
 }
 
-class _HeroPanel extends StatelessWidget {
-  const _HeroPanel({required this.controller});
+class LiveMonitoringScreen extends StatelessWidget {
+  const LiveMonitoringScreen({super.key, required this.controller});
 
   final MonitoringController controller;
 
   @override
   Widget build(BuildContext context) {
-    final statusColor = _severityColor(
-      controller.liveStatus?.severity ?? controller.lastDetection?.severity ?? 'low',
-    );
+    final live = controller.liveStatus;
+    final severity = live?.severity ?? 'low';
+    final riskValue = (live?.score ?? controller.lastDetection?.score ?? 0).clamp(0.0, 1.0).toDouble();
+    final fallValue = (live?.fallProbability ?? controller.lastDetection?.fallProbability ?? 0)
+        .clamp(0.0, 1.0)
+        .toDouble();
 
-    return Container(
-      padding: const EdgeInsets.all(24),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(30),
-        gradient: const LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: <Color>[
-            Color(0xFF0F8579),
-            Color(0xFF174B6D),
-          ],
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        _StatusBanner(
+          color: _severityColor(severity),
+          title: 'Live Status: ${_severityLabel(severity)}',
+          message: live?.lastMessage ?? 'Monitoring active.',
         ),
-        boxShadow: const <BoxShadow>[
-          BoxShadow(
-            color: Color(0x1F174B6D),
-            blurRadius: 24,
-            offset: Offset(0, 12),
+        const SizedBox(height: 16),
+        const _WavePulseCard(),
+        const SizedBox(height: 16),
+        _CircularRiskMeter(label: 'Risk Level', value: riskValue),
+        const SizedBox(height: 16),
+        _StatCard(label: 'Movement Intensity', value: '${(fallValue * 100).toStringAsFixed(0)}%'),
+        const SizedBox(height: 10),
+        _StatCard(label: 'Stability', value: _stabilityText(riskValue)),
+        const SizedBox(height: 10),
+        _StatCard(label: 'Alert Level', value: _severityLabel(severity)),
+        const SizedBox(height: 16),
+        _LocationSection(controller: controller),
+        const SizedBox(height: 16),
+        const Text('Recent Timeline', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 18)),
+        const SizedBox(height: 8),
+        _TimelineItem(label: _formatDateTime(DateTime.now().subtract(const Duration(minutes: 1))), text: 'Monitoring active'),
+        _TimelineItem(label: _formatDateTime(controller.lastTransmissionAt), text: 'Latest movement analyzed'),
+        _TimelineItem(label: _formatDateTime(DateTime.now()), text: live?.lastMessage ?? 'No abnormal movement'),
+      ],
+    );
+  }
+}
+
+class AlertsScreen extends StatelessWidget {
+  const AlertsScreen({super.key, required this.controller});
+
+  final MonitoringController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final alerts = controller.caregiverAlerts;
+    return RefreshIndicator(
+      onRefresh: () => controller.refreshCaregiverData(),
+      child: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          if (alerts.isEmpty)
+            const _StatusBanner(
+              color: Color(0xFF1B9B8B),
+              title: 'No Active Alerts',
+              message: 'Everything looks stable right now.',
+            ),
+          ...alerts.map(
+            (alert) => Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: _AlertCard(
+                alert: alert,
+                onAcknowledge: () => controller.acknowledgeAlert(alert.id),
+                onResolve: () => controller.resolveAlert(alert.id),
+              ),
+            ),
           ),
         ],
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
+    );
+  }
+}
+
+class InsightsScreen extends StatelessWidget {
+  const InsightsScreen({super.key, required this.controller});
+
+  final MonitoringController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final risk = ((controller.liveStatus?.score ?? 0) * 100).round();
+    final movement = ((controller.liveStatus?.fallProbability ?? 0) * 100).round();
+    final summary = controller.summary;
+    final insight = movement < 25
+        ? 'Patient has been less active than usual today.'
+        : movement > 70
+            ? 'Higher instability trends detected in recent hours.'
+            : 'Movement pattern appears balanced today.';
+
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        const Text('Daily & Weekly Insights', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700)),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(child: _StatCard(label: 'Activity Level', value: '$movement%')),
+            const SizedBox(width: 10),
+            Expanded(child: _StatCard(label: 'Risk Pattern', value: '$risk%')),
+          ],
+        ),
+        const SizedBox(height: 12),
+        _SimpleBarGraph(values: [
+          (movement / 100).clamp(0.1, 1.0),
+          ((movement + 10) / 100).clamp(0.1, 1.0),
+          ((movement - 5) / 100).clamp(0.1, 1.0),
+          ((movement + 8) / 100).clamp(0.1, 1.0),
+          (risk / 100).clamp(0.1, 1.0),
+          ((risk - 7) / 100).clamp(0.1, 1.0),
+          ((risk + 4) / 100).clamp(0.1, 1.0),
+        ]),
+        const SizedBox(height: 12),
+        _StatusBanner(
+          color: const Color(0xFF2A7DA8),
+          title: 'AI Insight',
+          message: insight,
+        ),
+        if (summary != null) ...[
+          const SizedBox(height: 12),
+          _StatusBanner(
+            color: const Color(0xFF4A708F),
+            title: 'Monitoring Summary',
+            message:
+                '${summary.activeSessions} active monitoring sessions and ${summary.openAlerts} open alerts across ${summary.totalPatients} patients.',
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class PatientProfileScreen extends StatefulWidget {
+  const PatientProfileScreen({super.key, required this.controller});
+
+  final MonitoringController controller;
+
+  @override
+  State<PatientProfileScreen> createState() => _PatientProfileScreenState();
+}
+
+class _PatientProfileScreenState extends State<PatientProfileScreen> {
+  Future<void> _editProfile() async {
+    final controller = widget.controller;
+    final nameCtrl = TextEditingController(text: controller.patientName);
+    final ageCtrl = TextEditingController(text: controller.patientAge?.toString() ?? '');
+    final noteCtrl = TextEditingController(text: controller.medicalNotes);
+    final contactCtrl = TextEditingController(text: controller.emergencyContact);
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (context) {
+        return Padding(
+          padding: EdgeInsets.fromLTRB(16, 16, 16, 16 + MediaQuery.of(context).viewInsets.bottom),
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text('Update Patient Profile', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 18)),
+                const SizedBox(height: 12),
+                TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: 'Name')),
+                const SizedBox(height: 8),
+                TextField(controller: ageCtrl, decoration: const InputDecoration(labelText: 'Age')),
+                const SizedBox(height: 8),
+                TextField(controller: noteCtrl, decoration: const InputDecoration(labelText: 'Medical notes')),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: contactCtrl,
+                  decoration: const InputDecoration(labelText: 'Emergency contact'),
+                ),
+                const SizedBox(height: 12),
+                FilledButton(
+                  onPressed: () async {
+                    await controller.updateProfile(
+                      patientName: nameCtrl.text,
+                      patientAgeText: ageCtrl.text,
+                      medicalNotes: noteCtrl.text,
+                      emergencyContact: contactCtrl.text,
+                    );
+                    if (context.mounted) Navigator.pop(context);
+                  },
+                  child: const Text('Save'),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+
+    nameCtrl.dispose();
+    ageCtrl.dispose();
+    noteCtrl.dispose();
+    contactCtrl.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = widget.controller;
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: _cardDecoration(),
+          child: Row(
+            children: [
+              const CircleAvatar(radius: 28, child: Icon(Icons.person_outline)),
+              const SizedBox(width: 12),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
-                  children: <Widget>[
-                    const Text(
-                      'Elderly Monitor',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 28,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                    const SizedBox(height: 10),
+                  children: [
                     Text(
-                      controller.patientName.isEmpty
-                          ? 'Set up the patient profile to begin live mobile monitoring.'
-                          : 'Live detection profile for ${controller.patientName}${controller.roomLabel.isEmpty ? '' : ' - ${controller.roomLabel}'}',
-                      style: const TextStyle(
-                        color: Color(0xFFF0F7F4),
-                        height: 1.5,
-                        fontSize: 15,
-                      ),
+                      controller.patientName.isEmpty ? 'Monitored Patient' : controller.patientName,
+                      style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 18),
                     ),
+                    Text(controller.patientAge == null ? 'Age not set' : '${controller.patientAge} years'),
                   ],
                 ),
               ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.16),
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: <Widget>[
-                    Container(
-                      width: 10,
-                      height: 10,
-                      decoration: BoxDecoration(
-                        color: statusColor,
-                        shape: BoxShape.circle,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      _severityLabel(
-                        controller.liveStatus?.severity ??
-                            controller.lastDetection?.severity ??
-                            'low',
-                      ),
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ],
-                ),
+              IconButton(
+                onPressed: _editProfile,
+                icon: const Icon(Icons.edit_outlined),
               ),
             ],
           ),
-          const SizedBox(height: 22),
-          Wrap(
-            spacing: 12,
-            runSpacing: 12,
-            children: <Widget>[
-              _HeroStat(
-                label: 'Backend',
-                value: controller.backendReachable ? 'Online' : 'Offline',
+        ),
+        const SizedBox(height: 12),
+        _StatCard(label: 'Medical Notes', value: controller.medicalNotes.isEmpty ? 'Not provided' : controller.medicalNotes),
+        const SizedBox(height: 10),
+        _StatCard(
+          label: 'Emergency Contact',
+          value: controller.emergencyContact.isEmpty ? 'Not provided' : controller.emergencyContact,
+        ),
+        const SizedBox(height: 10),
+        _StatCard(
+          label: 'Device Status',
+          value: controller.isStreaming ? 'Monitoring active' : 'Monitoring paused',
+        ),
+        const SizedBox(height: 10),
+        _StatCard(
+          label: 'Home Location',
+          value: controller.hasHomeLocation
+              ? '${controller.homeLatitude!.toStringAsFixed(5)}, ${controller.homeLongitude!.toStringAsFixed(5)}'
+              : 'Not set yet',
+        ),
+        const SizedBox(height: 10),
+        Wrap(
+          spacing: 10,
+          runSpacing: 10,
+          children: [
+            FilledButton.icon(
+              onPressed: controller.setHomeLocationFromCurrent,
+              icon: const Icon(Icons.home_outlined),
+              label: const Text('Set Home from Current'),
+            ),
+            OutlinedButton.icon(
+              onPressed: controller.hasHomeLocation ? controller.clearHomeLocation : null,
+              icon: const Icon(Icons.delete_outline),
+              label: const Text('Clear Home'),
+            ),
+          ],
+        ),
+        if (controller.locationError != null) ...[
+          const SizedBox(height: 10),
+          _StatusBanner(
+            color: const Color(0xFFB53B34),
+            title: 'Location Notice',
+            message: controller.locationError!,
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class SettingsScreen extends StatefulWidget {
+  const SettingsScreen({super.key, required this.controller});
+
+  final MonitoringController controller;
+
+  @override
+  State<SettingsScreen> createState() => _SettingsScreenState();
+}
+
+class _SettingsScreenState extends State<SettingsScreen> {
+  late final TextEditingController _emailController;
+
+  @override
+  void initState() {
+    super.initState();
+    _emailController = TextEditingController(text: widget.controller.caregiverEmail);
+  }
+
+  @override
+  void didUpdateWidget(covariant SettingsScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final latest = widget.controller.caregiverEmail;
+    if (_emailController.text != latest) {
+      _emailController.text = latest;
+    }
+  }
+
+  @override
+  void dispose() {
+    _emailController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = widget.controller;
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        SwitchListTile(
+          title: const Text('Notifications'),
+          subtitle: const Text('Receive immediate risk and emergency updates'),
+          value: controller.notificationsEnabled,
+          onChanged: controller.setNotificationsEnabled,
+        ),
+        const SizedBox(height: 8),
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: _cardDecoration(),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Alert Delivery', style: TextStyle(fontWeight: FontWeight.w700)),
+              const SizedBox(height: 8),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Email Alerts'),
+                subtitle: const Text('Send critical alerts to caregiver email'),
+                value: controller.alertViaEmail,
+                onChanged: controller.notificationsEnabled ? controller.setAlertViaEmail : null,
               ),
-              _HeroStat(
-                label: 'Session',
-                value: controller.isStreaming ? 'Streaming' : 'Idle',
+              if (controller.alertViaEmail) ...[
+                TextField(
+                  controller: _emailController,
+                  keyboardType: TextInputType.emailAddress,
+                  decoration: const InputDecoration(
+                    labelText: 'Caregiver Email',
+                    hintText: 'caregiver@example.com',
+                  ),
+                  onSubmitted: controller.setCaregiverEmail,
+                ),
+                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: FilledButton(
+                    onPressed: () => controller.setCaregiverEmail(_emailController.text),
+                    child: const Text('Save Email'),
+                  ),
+                ),
+              ],
+              const SizedBox(height: 6),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Alarm Sound'),
+                subtitle: const Text('Play loud in-app alarm for severe alerts'),
+                value: controller.alertViaAlarm,
+                onChanged: controller.notificationsEnabled ? controller.setAlertViaAlarm : null,
               ),
-              _HeroStat(
-                label: 'Batches',
-                value: controller.batchesSent.toString(),
+              if (controller.alertViaAlarm && controller.notificationsEnabled)
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButton.icon(
+                    onPressed: controller.triggerTestAlarm,
+                    icon: const Icon(Icons.play_arrow_rounded),
+                    label: const Text('Test Alarm'),
+                  ),
+                ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 8),
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: _cardDecoration(),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Alert Sensitivity', style: TextStyle(fontWeight: FontWeight.w700)),
+              const SizedBox(height: 10),
+              SegmentedButton<String>(
+                segments: const [
+                  ButtonSegment(value: 'low', label: Text('Low')),
+                  ButtonSegment(value: 'medium', label: Text('Medium')),
+                  ButtonSegment(value: 'high', label: Text('High')),
+                ],
+                selected: {controller.alertSensitivity},
+                onSelectionChanged: (value) => controller.setAlertSensitivity(value.first),
               ),
-              _HeroStat(
-                label: 'Last batch',
-                value: controller.lastBatchSize == 0
-                    ? 'None'
-                    : '${controller.lastBatchSize} samples',
-              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 8),
+        SwitchListTile(
+          title: const Text('Live Location Tracking'),
+          subtitle: const Text('Share location for caregiver visibility and patient guidance'),
+          value: controller.locationTrackingEnabled,
+          onChanged: (enabled) {
+            if (enabled) {
+              controller.startLocationTracking();
+            } else {
+              controller.stopLocationTracking();
+            }
+          },
+        ),
+        if (controller.locationError != null)
+          _StatusBanner(
+            color: const Color(0xFFB53B34),
+            title: 'Location Access',
+            message: controller.locationError!,
+          ),
+        const SizedBox(height: 12),
+        FilledButton.icon(
+          onPressed: controller.isStreaming ? controller.stopMonitoring : controller.startMonitoring,
+          icon: Icon(controller.isStreaming ? Icons.pause_circle_outline : Icons.play_circle_outline),
+          label: Text(controller.isStreaming ? 'Pause Monitoring' : 'Activate Monitoring'),
+        ),
+        const SizedBox(height: 10),
+        OutlinedButton.icon(
+          onPressed: controller.caregiverLogout,
+          icon: const Icon(Icons.logout),
+          label: const Text('Sign Out Caregiver'),
+        ),
+      ],
+    );
+  }
+}
+
+class PatientModeHome extends StatelessWidget {
+  const PatientModeHome({super.key, required this.controller});
+
+  final MonitoringController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final severity = controller.liveStatus?.severity ?? 'low';
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        Container(
+          padding: const EdgeInsets.all(18),
+          decoration: BoxDecoration(
+            color: _severityColor(severity).withValues(alpha: 0.12),
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('You are safe', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 26)),
+              const SizedBox(height: 8),
+              Text(controller.isStreaming ? 'Monitoring is active' : 'Monitoring will resume shortly'),
+            ],
+          ),
+        ),
+        if (controller.currentPosition != null) ...[
+          const SizedBox(height: 14),
+          _LocationMapCard(
+            current: LatLng(controller.currentPosition!.latitude, controller.currentPosition!.longitude),
+            home: controller.hasHomeLocation
+                ? LatLng(controller.homeLatitude!, controller.homeLongitude!)
+                : null,
+            compact: false,
+          ),
+        ],
+        if (controller.currentPosition != null && controller.hasHomeLocation) ...[
+          const SizedBox(height: 10),
+          _StatusBanner(
+            color: const Color(0xFF2A7DA8),
+            title: 'Direction Home',
+            message:
+                '${_distanceKm(controller.currentPosition!.latitude, controller.currentPosition!.longitude, controller.homeLatitude!, controller.homeLongitude!).toStringAsFixed(2)} km away, head ${_bearingDirection(controller.currentPosition!.latitude, controller.currentPosition!.longitude, controller.homeLatitude!, controller.homeLongitude!)}.',
+          ),
+        ],
+        if (controller.currentPosition == null || !controller.hasHomeLocation) ...[
+          const SizedBox(height: 12),
+          const _StatusBanner(
+            color: Color(0xFF2A7DA8),
+            title: 'Location Guidance',
+            message: 'Ask your caregiver to set Home Location from the profile for navigation help.',
+          ),
+        ],
+        const SizedBox(height: 18),
+        FilledButton.icon(
+          style: FilledButton.styleFrom(
+            backgroundColor: const Color(0xFFC2453F),
+            padding: const EdgeInsets.symmetric(vertical: 18),
+          ),
+          onPressed: () => _confirmEmergency(context),
+          icon: const Icon(Icons.sos_outlined),
+          label: const Text('Call for Help'),
+        ),
+        const SizedBox(height: 12),
+        OutlinedButton.icon(
+          onPressed: controller.emergencyContact.isEmpty ? null : () {},
+          icon: const Icon(Icons.phone_outlined),
+          label: const Text('Call Caregiver'),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _confirmEmergency(BuildContext context) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Send emergency alert?'),
+          content: const Text('This will immediately notify the caregiver.'),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+            FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Send Alert')),
+          ],
+        );
+      },
+    );
+    if (confirmed == true) {
+      await controller.triggerEmergencyAlert();
+    }
+  }
+}
+
+class _PatientHeroCard extends StatelessWidget {
+  const _PatientHeroCard({
+    required this.name,
+    required this.age,
+    required this.severity,
+    required this.lastUpdated,
+  });
+
+  final String name;
+  final String age;
+  final String severity;
+  final String lastUpdated;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(colors: [Color(0xFF0A7FA6), Color(0xFF155A9B)]),
+        borderRadius: BorderRadius.circular(22),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(name, style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w700)),
+          const SizedBox(height: 6),
+          Text(age, style: const TextStyle(color: Color(0xFFE3F4FB))),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              _StatusPill(label: _severityEmoji(severity), color: _severityColor(severity)),
+              const SizedBox(width: 10),
+              Text('Updated $lastUpdated', style: const TextStyle(color: Colors.white70)),
             ],
           ),
         ],
@@ -708,271 +1058,118 @@ class _HeroPanel extends StatelessWidget {
   }
 }
 
-class _DetectionPanel extends StatelessWidget {
-  const _DetectionPanel({
-    required this.detection,
-    required this.liveStatus,
-  });
+class _StatusBanner extends StatelessWidget {
+  const _StatusBanner({required this.color, required this.title, required this.message});
 
-  final DetectionResultModel? detection;
-  final LiveStatusModel? liveStatus;
-
-  @override
-  Widget build(BuildContext context) {
-    final effectiveSeverity = liveStatus?.severity ?? detection?.severity ?? 'low';
-    final severityColor = _severityColor(effectiveSeverity);
-    final message = liveStatus?.lastMessage ??
-        detection?.message ??
-        'No sensor batches have been analyzed yet.';
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: <Widget>[
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(18),
-          decoration: BoxDecoration(
-            color: severityColor.withValues(alpha: 0.12),
-            borderRadius: BorderRadius.circular(20),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              Row(
-                children: <Widget>[
-                  Container(
-                    width: 12,
-                    height: 12,
-                    decoration: BoxDecoration(
-                      color: severityColor,
-                      shape: BoxShape.circle,
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Text(
-                    _severityLabel(effectiveSeverity),
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w800,
-                      color: severityColor,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              Text(
-                message,
-                style: const TextStyle(
-                  fontSize: 15,
-                  height: 1.45,
-                  color: Color(0xFF24463A),
-                ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 18),
-        Row(
-          children: <Widget>[
-            Expanded(
-              child: _ScorePanel(
-                title: 'Risk Score',
-                value: detection?.score ?? liveStatus?.score ?? 0,
-                color: severityColor,
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: _ScorePanel(
-                title: 'Fall Probability',
-                value: detection?.fallProbability ?? liveStatus?.fallProbability ?? 0,
-                color: const Color(0xFFCC5A3C),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 18),
-        Wrap(
-          spacing: 12,
-          runSpacing: 12,
-          children: <Widget>[
-            _MetricChip(
-              label: 'Peak Acceleration',
-              value: detection == null ? 'Pending' : '${detection!.peakAccG.toStringAsFixed(2)} g',
-            ),
-            _MetricChip(
-              label: 'Peak Gyroscope',
-              value: detection == null
-                  ? 'Pending'
-                  : '${detection!.peakGyroDps.toStringAsFixed(1)} dps',
-            ),
-            _MetricChip(
-              label: 'Peak Jerk',
-              value: detection == null
-                  ? 'Pending'
-                  : '${detection!.peakJerkGps.toStringAsFixed(2)} g/s',
-            ),
-            _MetricChip(
-              label: 'Stillness Ratio',
-              value: detection == null
-                  ? 'Pending'
-                  : '${(detection!.stillnessRatio * 100).toStringAsFixed(0)}%',
-            ),
-          ],
-        ),
-        const SizedBox(height: 18),
-        Text(
-          'Detector Reasons',
-          style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                fontWeight: FontWeight.w700,
-              ),
-        ),
-        const SizedBox(height: 10),
-        if (detection == null || detection!.reasons.isEmpty)
-          const Text(
-            'Reasons will appear after the backend has analyzed a batch.',
-            style: TextStyle(color: Color(0xFF64776F)),
-          )
-        else
-          Wrap(
-            spacing: 10,
-            runSpacing: 10,
-            children: detection!.reasons
-                .map(
-                  (reason) => Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFF2EFE9),
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    child: Text(reason),
-                  ),
-                )
-                .toList(),
-          ),
-      ],
-    );
-  }
-}
-
-class _EmergencyPanel extends StatelessWidget {
-  const _EmergencyPanel({required this.controller});
-
-  final MonitoringController controller;
-
-  @override
-  Widget build(BuildContext context) {
-    final alert = controller.activeAlert;
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: <Widget>[
-        Container(
-          padding: const EdgeInsets.all(18),
-          decoration: BoxDecoration(
-            color: const Color(0xFFFFF1EA),
-            borderRadius: BorderRadius.circular(20),
-          ),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              const Icon(
-                Icons.warning_amber_rounded,
-                color: Color(0xFFCC5A3C),
-                size: 30,
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  'Use the manual trigger when a caregiver needs to raise an alert immediately, even if the automatic detector has not classified a fall yet.',
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: const Color(0xFF5B3A2C),
-                        height: 1.45,
-                      ),
-                ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 16),
-        FilledButton.icon(
-          style: FilledButton.styleFrom(
-            backgroundColor: const Color(0xFFCC5A3C),
-            foregroundColor: Colors.white,
-            padding: const EdgeInsets.symmetric(vertical: 16),
-          ),
-          onPressed: controller.isBusy ? null : controller.triggerEmergencyAlert,
-          icon: const Icon(Icons.sos_outlined),
-          label: const Text('Send Emergency Alert'),
-        ),
-        const SizedBox(height: 16),
-        if (alert == null)
-          const Text(
-            'No active manual alert on this phone yet.',
-            style: TextStyle(color: Color(0xFF64776F)),
-          )
-        else
-          Column(
-            children: <Widget>[
-              _InfoRow(label: 'Alert ID', value: alert.id),
-              _InfoRow(label: 'Severity', value: _severityLabel(alert.severity)),
-              _InfoRow(label: 'Status', value: alert.status),
-              _InfoRow(label: 'Message', value: alert.message),
-            ],
-          ),
-      ],
-    );
-  }
-}
-
-class _ScorePanel extends StatelessWidget {
-  const _ScorePanel({
-    required this.title,
-    required this.value,
-    required this.color,
-  });
-
+  final Color color;
   final String title;
-  final double value;
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title, style: TextStyle(color: color, fontWeight: FontWeight.w700)),
+          const SizedBox(height: 6),
+          Text(message),
+        ],
+      ),
+    );
+  }
+}
+
+class _StatusPill extends StatelessWidget {
+  const _StatusPill({required this.label, required this.color});
+
+  final String label;
   final Color color;
 
   @override
   Widget build(BuildContext context) {
-    final safeValue = value.clamp(0.0, 1.0).toDouble();
-
     return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF8F4EE),
-        borderRadius: BorderRadius.circular(18),
-      ),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+      decoration: BoxDecoration(color: color.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(999)),
+      child: Text(label, style: TextStyle(color: color, fontWeight: FontWeight.w700)),
+    );
+  }
+}
+
+class _StatCard extends StatelessWidget {
+  const _StatCard({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: _cardDecoration(),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          Text(
-            title,
-            style: const TextStyle(
-              fontWeight: FontWeight.w700,
-              color: Color(0xFF163126),
-            ),
-          ),
-          const SizedBox(height: 10),
-          Text(
-            '${(safeValue * 100).toStringAsFixed(0)}%',
-            style: const TextStyle(
-              fontSize: 24,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-          const SizedBox(height: 10),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(999),
-            child: LinearProgressIndicator(
-              value: safeValue,
-              minHeight: 10,
-              backgroundColor: color.withValues(alpha: 0.14),
-              valueColor: AlwaysStoppedAnimation<Color>(color),
-            ),
+        children: [
+          Text(label, style: const TextStyle(color: Color(0xFF5D7385))),
+          const SizedBox(height: 8),
+          Text(value, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+        ],
+      ),
+    );
+  }
+}
+
+class _MiniTrendCard extends StatelessWidget {
+  const _MiniTrendCard({required this.value});
+  final double value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: _cardDecoration(),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('24h Activity'),
+          const SizedBox(height: 8),
+          LinearProgressIndicator(value: value, minHeight: 10),
+        ],
+      ),
+    );
+  }
+}
+
+class _WavePulseCard extends StatelessWidget {
+  const _WavePulseCard();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: _cardDecoration(),
+      child: const Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Motion Activity', style: TextStyle(fontWeight: FontWeight.w700)),
+          SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(child: _PulseBar(height: 14)),
+              SizedBox(width: 6),
+              Expanded(child: _PulseBar(height: 20)),
+              SizedBox(width: 6),
+              Expanded(child: _PulseBar(height: 30)),
+              SizedBox(width: 6),
+              Expanded(child: _PulseBar(height: 18)),
+              SizedBox(width: 6),
+              Expanded(child: _PulseBar(height: 12)),
+            ],
           ),
         ],
       ),
@@ -980,56 +1177,52 @@ class _ScorePanel extends StatelessWidget {
   }
 }
 
-class _BannerMessage extends StatelessWidget {
-  const _BannerMessage({
-    required this.title,
-    required this.message,
-    required this.backgroundColor,
-    required this.accentColor,
-  });
+class _PulseBar extends StatelessWidget {
+  const _PulseBar({required this.height});
+  final double height;
 
-  final String title;
-  final String message;
-  final Color backgroundColor;
-  final Color accentColor;
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: height,
+      decoration: BoxDecoration(
+        color: const Color(0xFF1788B3).withValues(alpha: 0.65),
+        borderRadius: BorderRadius.circular(8),
+      ),
+    );
+  }
+}
+
+class _CircularRiskMeter extends StatelessWidget {
+  const _CircularRiskMeter({required this.label, required this.value});
+
+  final String label;
+  final double value;
 
   @override
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: backgroundColor,
-        borderRadius: BorderRadius.circular(20),
-      ),
+      decoration: _cardDecoration(),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          Icon(
-            Icons.info_outline_rounded,
-            color: accentColor,
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                Text(
-                  title,
-                  style: TextStyle(
-                    color: accentColor,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  message,
-                  style: const TextStyle(
-                    color: Color(0xFF364942),
-                    height: 1.45,
-                  ),
-                ),
-              ],
+        children: [
+          SizedBox(
+            width: 76,
+            height: 76,
+            child: CircularProgressIndicator(
+              value: value,
+              strokeWidth: 9,
+              backgroundColor: Colors.grey.shade200,
             ),
+          ),
+          const SizedBox(width: 16),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(label, style: const TextStyle(fontWeight: FontWeight.w700)),
+              const SizedBox(height: 4),
+              Text('${(value * 100).toStringAsFixed(0)}%', style: const TextStyle(fontSize: 22)),
+            ],
           ),
         ],
       ),
@@ -1037,148 +1230,185 @@ class _BannerMessage extends StatelessWidget {
   }
 }
 
-class _CardShell extends StatelessWidget {
-  const _CardShell({required this.child});
-
-  final Widget child;
+class _TimelineItem extends StatelessWidget {
+  const _TimelineItem({required this.label, required this.text});
+  final String label;
+  final String text;
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: child,
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(12),
+      decoration: _cardDecoration(),
+      child: Row(
+        children: [
+          Text(label, style: const TextStyle(color: Color(0xFF5D7385))),
+          const SizedBox(width: 10),
+          Expanded(child: Text(text)),
+        ],
       ),
     );
   }
 }
 
-class _SectionHeader extends StatelessWidget {
-  const _SectionHeader({
-    required this.title,
-    required this.subtitle,
+class _AlertCard extends StatelessWidget {
+  const _AlertCard({
+    required this.alert,
+    required this.onAcknowledge,
+    required this.onResolve,
   });
 
-  final String title;
-  final String subtitle;
+  final AlertRecordModel alert;
+  final VoidCallback onAcknowledge;
+  final VoidCallback onResolve;
 
   @override
   Widget build(BuildContext context) {
+    final color = _severityColor(alert.severity);
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: _cardDecoration(),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              _StatusPill(label: _severityLabel(alert.severity), color: color),
+              const Spacer(),
+              Text(_formatDateTime(alert.createdAt), style: const TextStyle(color: Color(0xFF6A7B8A))),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(alert.message, style: const TextStyle(fontWeight: FontWeight.w700)),
+          const SizedBox(height: 6),
+          Text(alert.manuallyTriggered ? 'Manual alert' : 'Automatic detection alert'),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              OutlinedButton(onPressed: onAcknowledge, child: const Text('Acknowledge')),
+              OutlinedButton(onPressed: onResolve, child: const Text('Resolve')),
+              OutlinedButton(onPressed: () {}, child: const Text('Call Patient')),
+              FilledButton(onPressed: () {}, child: const Text('Notify Contact')),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _LocationSection extends StatelessWidget {
+  const _LocationSection({required this.controller});
+
+  final MonitoringController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final current = controller.currentPosition;
+    if (!controller.locationTrackingEnabled) {
+      return Container(
+        padding: const EdgeInsets.all(14),
+        decoration: _cardDecoration(),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Live Location', style: TextStyle(fontWeight: FontWeight.w700)),
+            const SizedBox(height: 8),
+            const Text('Location tracking is off.'),
+            const SizedBox(height: 8),
+            FilledButton.icon(
+              onPressed: controller.startLocationTracking,
+              icon: const Icon(Icons.location_searching_outlined),
+              label: const Text('Enable Tracking'),
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (current == null) {
+      return Container(
+        padding: const EdgeInsets.all(14),
+        decoration: _cardDecoration(),
+        child: const Text('Fetching live location...'),
+      );
+    }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
-      children: <Widget>[
-        Text(
-          title,
-          style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                fontWeight: FontWeight.w800,
-              ),
+      children: [
+        _LocationMapCard(
+          current: LatLng(current.latitude, current.longitude),
+          home: controller.hasHomeLocation ? LatLng(controller.homeLatitude!, controller.homeLongitude!) : null,
+          compact: false,
         ),
-        const SizedBox(height: 6),
-        Text(
-          subtitle,
-          style: const TextStyle(
-            color: Color(0xFF5F726A),
-            height: 1.5,
-          ),
+        const SizedBox(height: 8),
+        _StatCard(
+          label: 'Current Position',
+          value: '${current.latitude.toStringAsFixed(5)}, ${current.longitude.toStringAsFixed(5)}',
         ),
       ],
     );
   }
 }
 
-class _MetricChip extends StatelessWidget {
-  const _MetricChip({
-    required this.label,
-    required this.value,
+class _LocationMapCard extends StatelessWidget {
+  const _LocationMapCard({
+    required this.current,
+    required this.home,
+    required this.compact,
   });
 
-  final String label;
-  final String value;
+  final LatLng current;
+  final LatLng? home;
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
+    final points = <LatLng>[if (home != null) home!, current];
     return Container(
-      constraints: const BoxConstraints(minWidth: 140),
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF8F4EE),
-        borderRadius: BorderRadius.circular(18),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          Text(
-            label,
-            style: const TextStyle(
-              color: Color(0xFF6B7B74),
-              fontSize: 12,
-              fontWeight: FontWeight.w700,
-            ),
+      height: compact ? 200 : 260,
+      clipBehavior: Clip.antiAlias,
+      decoration: _cardDecoration(),
+      child: FlutterMap(
+        options: MapOptions(
+          initialCenter: current,
+          initialZoom: 15,
+        ),
+        children: [
+          TileLayer(
+            urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+            userAgentPackageName: 'com.example.newapp',
           ),
-          const SizedBox(height: 6),
-          Text(
-            value,
-            style: const TextStyle(
-              color: Color(0xFF163126),
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _SensorStatusTile extends StatelessWidget {
-  const _SensorStatusTile({
-    required this.label,
-    required this.isReady,
-  });
-
-  final String label;
-  final bool isReady;
-
-  @override
-  Widget build(BuildContext context) {
-    final color = isReady ? const Color(0xFF1B9B8B) : const Color(0xFFB53B34);
-
-    return Container(
-      constraints: const BoxConstraints(minWidth: 160),
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF8F4EE),
-        borderRadius: BorderRadius.circular(18),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: <Widget>[
-          Container(
-            width: 12,
-            height: 12,
-            decoration: BoxDecoration(
-              color: color,
-              shape: BoxShape.circle,
-            ),
-          ),
-          const SizedBox(width: 10),
-          Flexible(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                Text(
-                  label,
-                  style: const TextStyle(
-                    color: Color(0xFF163126),
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  isReady ? 'Connected' : 'Unavailable',
-                  style: TextStyle(color: color),
+          if (points.length == 2)
+            PolylineLayer(
+              polylines: [
+                Polyline(
+                  points: points,
+                  strokeWidth: 4,
+                  color: const Color(0xFF2A7DA8),
                 ),
               ],
             ),
+          MarkerLayer(
+            markers: [
+              Marker(
+                point: current,
+                width: 40,
+                height: 40,
+                child: const Icon(Icons.person_pin_circle, color: Color(0xFF155A9B), size: 34),
+              ),
+              if (home != null)
+                Marker(
+                  point: home!,
+                  width: 40,
+                  height: 40,
+                  child: const Icon(Icons.home_rounded, color: Color(0xFF1B9B8B), size: 30),
+                ),
+            ],
           ),
         ],
       ),
@@ -1186,88 +1416,44 @@ class _SensorStatusTile extends StatelessWidget {
   }
 }
 
-class _InfoRow extends StatelessWidget {
-  const _InfoRow({
-    required this.label,
-    required this.value,
-  });
-
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          SizedBox(
-            width: 120,
-            child: Text(
-              label,
-              style: const TextStyle(
-                color: Color(0xFF6B7B74),
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ),
-          Expanded(
-            child: Text(
-              value,
-              style: const TextStyle(
-                color: Color(0xFF163126),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _HeroStat extends StatelessWidget {
-  const _HeroStat({
-    required this.label,
-    required this.value,
-  });
-
-  final String label;
-  final String value;
+class _SimpleBarGraph extends StatelessWidget {
+  const _SimpleBarGraph({required this.values});
+  final List<double> values;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: 150,
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.14),
-        borderRadius: BorderRadius.circular(18),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          Text(
-            label,
-            style: const TextStyle(
-              color: Color(0xFFD5ECE6),
-              fontSize: 12,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            value,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 16,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-        ],
+      padding: const EdgeInsets.all(16),
+      decoration: _cardDecoration(),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: values
+            .map(
+              (value) => Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  child: Container(
+                    height: 90 * value.clamp(0.1, 1.0),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF2B88B3),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
+                ),
+              ),
+            )
+            .toList(),
       ),
     );
   }
+}
+
+BoxDecoration _cardDecoration() {
+  return BoxDecoration(
+    color: Colors.white,
+    borderRadius: BorderRadius.circular(16),
+    boxShadow: const [BoxShadow(color: Color(0x140F2E4D), blurRadius: 14, offset: Offset(0, 6))],
+  );
 }
 
 Color _severityColor(String severity) {
@@ -1285,27 +1471,59 @@ Color _severityColor(String severity) {
 
 String _severityLabel(String severity) {
   switch (severity) {
-    case 'low':
-      return 'Low';
-    case 'medium':
-      return 'Medium';
     case 'high_risk':
       return 'High Risk';
     case 'fall_detected':
       return 'Fall Detected';
+    case 'medium':
+      return 'Medium Risk';
     default:
-      return severity.isEmpty ? 'Low' : severity.replaceAll('_', ' ').toUpperCase();
+      return 'Safe';
   }
 }
 
-String _formatTimestamp(DateTime? value) {
-  if (value == null) {
-    return 'No uploads yet';
+String _severityEmoji(String severity) {
+  switch (severity) {
+    case 'high_risk':
+      return '🔴 High Risk';
+    case 'fall_detected':
+      return '⚫ Fall Detected';
+    case 'medium':
+      return '🟡 Medium Risk';
+    default:
+      return '🟢 Safe';
   }
+}
 
+String _formatDateTime(DateTime? value) {
+  if (value == null) return 'just now';
   final local = value.toLocal();
-  final hour = local.hour.toString().padLeft(2, '0');
-  final minute = local.minute.toString().padLeft(2, '0');
-  final second = local.second.toString().padLeft(2, '0');
-  return '$hour:$minute:$second';
+  final h = local.hour.toString().padLeft(2, '0');
+  final m = local.minute.toString().padLeft(2, '0');
+  return '$h:$m';
+}
+
+String _stabilityText(double riskValue) {
+  if (riskValue > 0.75) return 'Unstable';
+  if (riskValue > 0.45) return 'Observe closely';
+  return 'Stable';
+}
+
+double _distanceKm(double lat1, double lon1, double lat2, double lon2) {
+  const distance = Distance();
+  return distance.as(LengthUnit.Kilometer, LatLng(lat1, lon1), LatLng(lat2, lon2));
+}
+
+String _bearingDirection(double lat1, double lon1, double lat2, double lon2) {
+  const distance = Distance();
+  final bearing = distance.bearing(LatLng(lat1, lon1), LatLng(lat2, lon2));
+  final normalized = (bearing + 360) % 360;
+  if (normalized >= 337.5 || normalized < 22.5) return 'North';
+  if (normalized < 67.5) return 'North-East';
+  if (normalized < 112.5) return 'East';
+  if (normalized < 157.5) return 'South-East';
+  if (normalized < 202.5) return 'South';
+  if (normalized < 247.5) return 'South-West';
+  if (normalized < 292.5) return 'West';
+  return 'North-West';
 }

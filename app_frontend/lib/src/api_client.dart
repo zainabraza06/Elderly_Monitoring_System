@@ -30,7 +30,7 @@ class BackendApiClient {
 
   Uri _uri(String path) => Uri.parse('$_baseUrl$path');
 
-  Future<Map<String, dynamic>> _send(Future<http.Response> requestFuture) async {
+  Future<Object> _send(Future<http.Response> requestFuture) async {
     try {
       final response = await requestFuture.timeout(_requestTimeout);
       return await _decodeResponse(response);
@@ -46,7 +46,7 @@ class BackendApiClient {
     }
   }
 
-  Future<Map<String, dynamic>> _decodeResponse(http.Response response) async {
+  Future<Object> _decodeResponse(http.Response response) async {
     final body = response.body.trim();
     final jsonBody = body.isEmpty ? <String, dynamic>{} : jsonDecode(body);
 
@@ -57,10 +57,24 @@ class BackendApiClient {
       throw ApiException('Request failed (${response.statusCode})');
     }
 
-    if (jsonBody is Map<String, dynamic>) {
-      return jsonBody;
+    if (jsonBody is Map<String, dynamic> || jsonBody is List<dynamic>) {
+      return jsonBody as Object;
     }
     throw ApiException('Unexpected response format from backend.');
+  }
+
+  Map<String, dynamic> _asMap(Object payload) {
+    if (payload is Map<String, dynamic>) {
+      return payload;
+    }
+    throw ApiException('Unexpected response object format from backend.');
+  }
+
+  List<dynamic> _asList(Object payload) {
+    if (payload is List<dynamic>) {
+      return payload;
+    }
+    throw ApiException('Unexpected response list format from backend.');
   }
 
   Future<void> ping() async {
@@ -70,26 +84,24 @@ class BackendApiClient {
   Future<PatientRecord> createPatient({
     required String fullName,
     int? age,
-    String? roomLabel,
   }) async {
     return PatientRecord.fromJson(
-      await _send(
+      _asMap(await _send(
         http.post(
           _uri('/api/v1/patients'),
           headers: {'Content-Type': 'application/json'},
           body: jsonEncode({
             'full_name': fullName,
             'age': age,
-            'room_label': roomLabel,
           }),
         ),
-      ),
+      )),
     );
   }
 
   Future<PatientRecord> getPatient(String patientId) async {
     return PatientRecord.fromJson(
-      await _send(http.get(_uri('/api/v1/patients/$patientId'))),
+      _asMap(await _send(http.get(_uri('/api/v1/patients/$patientId')))),
     );
   }
 
@@ -99,7 +111,7 @@ class BackendApiClient {
     String? ownerName,
   }) async {
     return DeviceRecord.fromJson(
-      await _send(
+      _asMap(await _send(
         http.post(
           _uri('/api/v1/devices'),
           headers: {'Content-Type': 'application/json'},
@@ -109,13 +121,13 @@ class BackendApiClient {
             'owner_name': ownerName,
           }),
         ),
-      ),
+      )),
     );
   }
 
   Future<DeviceRecord> getDevice(String deviceId) async {
     return DeviceRecord.fromJson(
-      await _send(http.get(_uri('/api/v1/devices/$deviceId'))),
+      _asMap(await _send(http.get(_uri('/api/v1/devices/$deviceId')))),
     );
   }
 
@@ -126,7 +138,7 @@ class BackendApiClient {
     String startedBy = 'flutter_app',
   }) async {
     return SessionRecord.fromJson(
-      await _send(
+      _asMap(await _send(
         http.post(
           _uri('/api/v1/sessions'),
           headers: {'Content-Type': 'application/json'},
@@ -137,7 +149,7 @@ class BackendApiClient {
             'started_by': startedBy,
           }),
         ),
-      ),
+      )),
     );
   }
 
@@ -163,7 +175,7 @@ class BackendApiClient {
     required List<SensorReadingPayload> samples,
   }) async {
     return IngestResponseModel.fromJson(
-      await _send(
+      _asMap(await _send(
         http.post(
           _uri('/api/v1/ingest/live'),
           headers: {'Content-Type': 'application/json'},
@@ -179,7 +191,7 @@ class BackendApiClient {
             'samples': samples.map((sample) => sample.toJson()).toList(),
           }),
         ),
-      ),
+      )),
     );
   }
 
@@ -191,7 +203,7 @@ class BackendApiClient {
     String message = 'Emergency alert triggered from mobile app.',
   }) async {
     return AlertRecordModel.fromJson(
-      await _send(
+      _asMap(await _send(
         http.post(
           _uri('/api/v1/alerts/manual'),
           headers: {'Content-Type': 'application/json'},
@@ -204,7 +216,175 @@ class BackendApiClient {
             'actor': 'flutter_app',
           }),
         ),
+      )),
+    );
+  }
+
+  Future<SystemSummaryModel> getSummary() async {
+    return SystemSummaryModel.fromJson(
+      _asMap(await _send(http.get(_uri('/api/v1/summary')))),
+    );
+  }
+
+  Future<List<LiveStatusModel>> getLivePatients() async {
+    final rows = _asList(await _send(http.get(_uri('/api/v1/monitor/patients/live'))));
+    return rows
+        .whereType<Map<String, dynamic>>()
+        .map(LiveStatusModel.fromJson)
+        .toList();
+  }
+
+  Future<List<AlertRecordModel>> getAlerts({
+    String? status,
+    String? patientId,
+  }) async {
+    final query = <String, String>{};
+    if (status != null && status.isNotEmpty) {
+      query['status'] = status;
+    }
+    if (patientId != null && patientId.isNotEmpty) {
+      query['patient_id'] = patientId;
+    }
+
+    final uri = _uri('/api/v1/alerts').replace(queryParameters: query.isEmpty ? null : query);
+    final rows = _asList(await _send(http.get(uri)));
+    return rows
+        .whereType<Map<String, dynamic>>()
+        .map(AlertRecordModel.fromJson)
+        .toList();
+  }
+
+  Future<AlertRecordModel> acknowledgeAlert({
+    required String alertId,
+    String actor = 'caregiver_app',
+    String? note,
+  }) async {
+    return AlertRecordModel.fromJson(
+      _asMap(await _send(
+        http.post(
+          _uri('/api/v1/alerts/$alertId/acknowledge'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({
+            'actor': actor,
+            'note': note,
+          }),
+        ),
+      )),
+    );
+  }
+
+  Future<AlertRecordModel> resolveAlert({
+    required String alertId,
+    String actor = 'caregiver_app',
+    String? note,
+  }) async {
+    return AlertRecordModel.fromJson(
+      _asMap(await _send(
+        http.post(
+          _uri('/api/v1/alerts/$alertId/resolve'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({
+            'actor': actor,
+            'note': note,
+          }),
+        ),
+      )),
+    );
+  }
+
+  Future<void> updateDetectorSensitivity(String level) async {
+    Map<String, dynamic> payload;
+    switch (level) {
+      case 'low':
+        payload = {
+          'medium_risk_score': 0.45,
+          'high_risk_score': 0.68,
+          'fall_score': 0.88,
+        };
+      case 'high':
+        payload = {
+          'medium_risk_score': 0.28,
+          'high_risk_score': 0.50,
+          'fall_score': 0.72,
+        };
+      default:
+        payload = {
+          'medium_risk_score': 0.35,
+          'high_risk_score': 0.58,
+          'fall_score': 0.80,
+        };
+    }
+
+    await _send(
+      http.put(
+        _uri('/api/v1/detector/config'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode(payload),
       ),
+    );
+  }
+
+  Future<CaregiverAuthModel> caregiverSignup({
+    required String fullName,
+    required String email,
+    required String password,
+  }) async {
+    return CaregiverAuthModel.fromJson(
+      _asMap(await _send(
+        http.post(
+          _uri('/api/v1/auth/caregiver/signup'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({
+            'full_name': fullName,
+            'email': email,
+            'password': password,
+          }),
+        ),
+      )),
+    );
+  }
+
+  Future<CaregiverAuthModel> caregiverLogin({
+    required String email,
+    required String password,
+  }) async {
+    return CaregiverAuthModel.fromJson(
+      _asMap(await _send(
+        http.post(
+          _uri('/api/v1/auth/caregiver/login'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({
+            'email': email,
+            'password': password,
+          }),
+        ),
+      )),
+    );
+  }
+
+  Future<GeneratedPatientCredentialModel> generatePatientCredentials({
+    required String caregiverToken,
+    required String fullName,
+    required int? age,
+    required String homeAddress,
+    String? emergencyContact,
+    String? notes,
+  }) async {
+    return GeneratedPatientCredentialModel.fromJson(
+      _asMap(await _send(
+        http.post(
+          _uri('/api/v1/auth/caregiver/patient-credentials'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({
+            'caregiver_token': caregiverToken,
+            'full_name': fullName,
+            'age': age,
+            'home_address': homeAddress,
+            'emergency_contact': emergencyContact,
+            'notes': notes,
+          }),
+        ),
+      )),
     );
   }
 }

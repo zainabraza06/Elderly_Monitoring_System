@@ -25,7 +25,6 @@ type SystemSummary = {
 type LivePatient = {
   patient_id: string;
   patient_name: string;
-  room_label: string | null;
   severity: string;
   score: number;
   fall_probability: number;
@@ -57,7 +56,6 @@ type SensorSample = {
 type TelemetrySnapshot = {
   patient_id: string;
   patient_name: string;
-  room_label: string | null;
   session_id: string;
   device_id: string;
   source: string;
@@ -370,8 +368,7 @@ export default function Home() {
                       <div>
                         <div className="text-lg font-semibold">{patient.patient_name}</div>
                         <div className="mt-1 text-sm text-[var(--muted)]">
-                          {patient.room_label || "Room not assigned"} - Last data{" "}
-                          {formatTime(patient.last_ingested_at)}
+                          Last data {formatTime(patient.last_ingested_at)}
                         </div>
                       </div>
                       <span

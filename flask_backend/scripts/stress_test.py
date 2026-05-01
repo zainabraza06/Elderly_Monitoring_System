@@ -113,7 +113,7 @@ async def bootstrap_entities(client: httpx.AsyncClient, api_prefix: str) -> tupl
     patient = await post_checked(
         client,
         f"{api_prefix}/patients",
-        {"full_name": f"Stress Test Patient {token}", "age": 72, "room_label": "Lab-1"},
+        {"full_name": f"Stress Test Patient {token}", "age": 72},
     )
     device = await post_checked(
         client,

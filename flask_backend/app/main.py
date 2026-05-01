@@ -17,9 +17,13 @@ from .schemas import (
     APIErrorResponse,
     AlertActionRequest,
     AlertStatus,
+    CaregiverLoginRequest,
+    CaregiverSignupRequest,
     DetectorConfigUpdate,
     DeviceCreate,
     HealthResponse,
+    PatientCredentialCreate,
+    PatientLoginRequest,
     ManualAlertCreate,
     PatientCreate,
     SensorBatchIn,
@@ -144,6 +148,38 @@ def create_app() -> FastAPI:
             app_name=settings.app_name,
             timestamp=datetime.now(timezone.utc),
         )
+
+    @app.post(f"{settings.api_prefix}/auth/caregiver/signup", tags=["auth"])
+    async def caregiver_signup(payload: CaregiverSignupRequest):
+        try:
+            auth = await store.signup_caregiver(payload)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return auth
+
+    @app.post(f"{settings.api_prefix}/auth/caregiver/login", tags=["auth"])
+    async def caregiver_login(payload: CaregiverLoginRequest):
+        try:
+            auth = await store.login_caregiver(payload)
+        except ValueError as exc:
+            raise HTTPException(status_code=401, detail=str(exc)) from exc
+        return auth
+
+    @app.post(f"{settings.api_prefix}/auth/caregiver/patient-credentials", tags=["auth"])
+    async def caregiver_generate_patient_credentials(payload: PatientCredentialCreate):
+        try:
+            generated = await store.generate_patient_credentials(payload)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return generated
+
+    @app.post(f"{settings.api_prefix}/auth/patient/login", tags=["auth"])
+    async def patient_login(payload: PatientLoginRequest):
+        try:
+            auth = await store.login_patient(payload)
+        except ValueError as exc:
+            raise HTTPException(status_code=401, detail=str(exc)) from exc
+        return auth
 
     @app.get(f"{settings.api_prefix}/summary", tags=["system"])
     async def get_summary():
