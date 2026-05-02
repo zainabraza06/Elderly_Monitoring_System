@@ -3,6 +3,8 @@ pandas
 scipy
 scikit-learn
 matplotlib
+seaborn
+tqdm
 joblib
 xgboost
 lightgbm

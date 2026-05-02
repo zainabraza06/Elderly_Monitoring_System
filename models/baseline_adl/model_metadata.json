@@ -1,0 +1,22 @@
+{
+  "dataset": "MobiAct",
+  "tasks": [
+    "Fall Detection",
+    "ADL Classification"
+  ],
+  "best_fall_model": "XGBoost",
+  "best_fall_accuracy": 0.9605031150816974,
+  "best_fall_f1": 0.828641370869033,
+  "best_fall_inference_ms": 0.5,
+  "best_fall_model_size_mb": 2.0,
+  "best_adl_model": "XGBoost",
+  "best_adl_accuracy": 0.8920417224980952,
+  "best_adl_f1": 0.8971718882111931,
+  "best_adl_inference_ms": 0.5,
+  "best_adl_model_size_mb": 2.0,
+  "recommendation": "XGBoost is recommended for mobile deployment",
+  "time_complexity_ml": "O(n_features * n_estimators)",
+  "space_complexity_ml": "O(2-5 MB)",
+  "time_complexity_dl": "O(seq_len * hidden_dim\u00b2)",
+  "space_complexity_dl": "O(2-50 MB)"
+}
