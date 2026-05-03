@@ -14,7 +14,7 @@ def model_root() -> Path:
     raw = os.environ.get("MODEL_ROOT")
     if raw:
         return Path(raw).expanduser().resolve()
-    return (_REPO_ROOT / "models").resolve()
+    return (_FLASK_ROOT / "models").resolve()
 
 
 def repo_root() -> Path:
@@ -26,4 +26,4 @@ def inference_manifest_path() -> Path:
     raw = os.environ.get("INFERENCE_MANIFEST")
     if raw:
         return Path(raw).expanduser().resolve()
-    return (_REPO_ROOT / "models" / "inference_manifest.json").resolve()
+    return (_FLASK_ROOT / "models" / "inference_manifest.json").resolve()

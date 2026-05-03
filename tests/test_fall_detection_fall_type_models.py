@@ -14,9 +14,10 @@ from baseline_falltype.feature_extractors import extract_fall_type_raw_vector
 
 def test_fall_detection_binary_116d_forward(repo_root: Path, inference_manifest: dict) -> None:
     """RobustScaler + XGBoost fall classifier accept 116-D enhanced features."""
+    model_dir = repo_root / "flask_backend" / "models"
     art = inference_manifest["artifacts"]["fall_binary"]
-    scaler = joblib.load(repo_root / "models" / art["scaler_path"])
-    model = joblib.load(repo_root / "models" / art["model_path"])
+    scaler = joblib.load(model_dir / art["scaler_path"])
+    model = joblib.load(model_dir / art["model_path"])
     d = int(inference_manifest["enhanced_feature_dim"])
     nf = getattr(scaler, "n_features_in_", None)
     assert nf == d, f"Fall scaler expects {nf}, manifest {d}"
@@ -37,11 +38,12 @@ def test_fall_detection_binary_116d_forward(repo_root: Path, inference_manifest:
 
 def test_fall_type_263d_pipeline_forward(repo_root: Path, inference_manifest: dict) -> None:
     """263-D raw vector → StandardScaler → MI columns → XGBoost 4-class."""
+    model_dir = repo_root / "flask_backend" / "models"
     ft_art = inference_manifest["artifacts"]["fall_type"]
-    scaler = joblib.load(repo_root / "models" / ft_art["scaler_path"])
-    model = joblib.load(repo_root / "models" / ft_art["model_path"])
-    indices = np.asarray(joblib.load(repo_root / "models" / ft_art["feature_indices_path"]))
-    encoder = joblib.load(repo_root / "models" / ft_art["label_encoder_path"])
+    scaler = joblib.load(model_dir / ft_art["scaler_path"])
+    model = joblib.load(model_dir / ft_art["model_path"])
+    indices = np.asarray(joblib.load(model_dir / ft_art["feature_indices_path"]))
+    encoder = joblib.load(model_dir / ft_art["label_encoder_path"])
 
     raw_dim = int(inference_manifest["fall_type_raw_dim"])
     assert getattr(scaler, "n_features_in_", None) == raw_dim
@@ -61,14 +63,15 @@ def test_fall_type_263d_pipeline_forward(repo_root: Path, inference_manifest: di
 
 def test_full_motion_inference_when_adl_present(repo_root: Path, inference_manifest: dict) -> None:
     """End-to-end `run_inference` only if baseline_adl artifacts exist."""
+    model_dir = repo_root / "flask_backend" / "models"
     adl = inference_manifest["artifacts"]["adl"]
-    adl_model = repo_root / "models" / adl["model_path"]
+    adl_model = model_dir / adl["model_path"]
     if not adl_model.is_file():
         pytest.skip("baseline_adl models missing — run scripts/baseline_fall/train_mobiact_baselines.py")
 
     from flask_backend.app.services.motion_xgb_service import load_artifacts, run_inference
 
-    art = load_artifacts(repo_root / "models" / "inference_manifest.json", repo_root / "models")
+    art = load_artifacts(model_dir / "inference_manifest.json", model_dir)
     z = [0.0] * art.enhanced_dim
     ft = [0.0] * art.fall_type_dim
     out = run_inference(art, z, ft, predict_fall_type=True)

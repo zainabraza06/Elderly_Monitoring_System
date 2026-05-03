@@ -18,10 +18,10 @@ from flask_backend.app.services.motion_xgb_service import (
 
 @pytest.fixture(scope="session")
 def artifacts(repo_root: Path) -> InferenceArtifacts:
-    mp = repo_root / "models" / "inference_manifest.json"
-    md = repo_root / "models"
+    mp = repo_root / "flask_backend" / "models" / "inference_manifest.json"
+    md = repo_root / "flask_backend" / "models"
     if not mp.is_file():
-        pytest.skip("models/inference_manifest.json not found")
+        pytest.skip("flask_backend/models/inference_manifest.json not found")
     try:
         return load_artifacts(mp, md)
     except FileNotFoundError as e:

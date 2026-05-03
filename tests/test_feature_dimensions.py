@@ -15,9 +15,10 @@ from baseline_falltype.feature_extractors import CompleteFallFeatureExtractor
 
 def test_deployed_enhanced_dim_matches_manifest(repo_root: Path, inference_manifest: dict) -> None:
     """Fall + ADL inference scalers must agree with manifest (same vector for both tasks)."""
+    model_dir = repo_root / "flask_backend" / "models"
     d = int(inference_manifest["enhanced_feature_dim"])
-    fall_p = repo_root / "models" / "baseline_fall" / "scaler_fall.pkl"
-    adl_p = repo_root / "models" / "baseline_adl" / "scaler_adl.pkl"
+    fall_p = model_dir / "baseline_fall" / "scaler_fall.pkl"
+    adl_p = model_dir / "baseline_adl" / "scaler_adl.pkl"
     if not fall_p.is_file() or not adl_p.is_file():
         pytest.skip("baseline fall/adl scalers not present (run train_mobiact_baselines.py)")
     sf = joblib.load(fall_p)
@@ -39,7 +40,7 @@ def test_baseline_fall_extractor_is_116_dim() -> None:
 
 
 def test_fall_type_manifest_matches_saved_scaler(repo_root: Path, inference_manifest: dict) -> None:
-    scaler_path = repo_root / "models" / "baseline_falltype" / "scaler.pkl"
+    scaler_path = repo_root / "flask_backend" / "models" / "baseline_falltype" / "scaler.pkl"
     if not scaler_path.is_file():
         pytest.skip("fall-type scaler not present")
     scaler = joblib.load(scaler_path)

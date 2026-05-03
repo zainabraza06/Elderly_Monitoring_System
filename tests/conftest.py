@@ -25,7 +25,7 @@ def repo_root() -> Path:
 def inference_manifest(repo_root: Path) -> dict:
     import json
 
-    path = repo_root / "models" / "inference_manifest.json"
+    path = repo_root / "flask_backend" / "models" / "inference_manifest.json"
     if not path.is_file():
-        pytest.skip("models/inference_manifest.json missing")
+        pytest.skip("flask_backend/models/inference_manifest.json missing")
     return json.loads(path.read_text(encoding="utf-8"))
