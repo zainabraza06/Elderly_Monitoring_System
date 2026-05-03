@@ -5,13 +5,15 @@ from __future__ import annotations
 import json
 import os
 import secrets
+import string
 import uuid
 
 import numpy as np
 from datetime import datetime, timedelta, timezone
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Header, HTTPException, Query, WebSocket
+from starlette.websockets import WebSocketDisconnect
 from pydantic import BaseModel, Field
 
 from flask_backend.app.auth_jwt import create_token, decode_token, hash_password, verify_password
@@ -22,7 +24,6 @@ from flask_backend.app.schemas_fall_feedback import FallFeedbackAck, FallFeedbac
 from flask_backend.app.schemas_motion import MotionInferenceRequest, MotionInferenceResponse
 from flask_backend.app.services.motion_xgb_service import InferenceArtifacts, run_inference
 
-MAX_ELDERS_PER_CAREGIVER = 2
 RESPONSE_DEADLINE_SEC = int(os.environ.get("FALL_RESPONSE_DEADLINE_SEC", "30"))
 EMERGENCY_DEADLINE_SEC = int(os.environ.get("FALL_EMERGENCY_DEADLINE_SEC", "90"))
 
@@ -36,6 +37,29 @@ router = APIRouter()
 
 # Set by ``main.py`` lifespan — avoids circular imports.
 _RUNTIME: dict[str, Any] = {}
+
+
+def _simple_letters_digits(*, letters: int = 5, digits: int = 5) -> str:
+    """Human-friendly token: lowercase letters then digits (e.g. ``abcde12345``)."""
+    alpha = "".join(secrets.choice(string.ascii_lowercase) for _ in range(letters))
+    nums = "".join(secrets.choice(string.digits) for _ in range(digits))
+    return f"{alpha}{nums}"
+
+
+def _pick_unique_elder_username(conn) -> str:
+    """``_simple_letters_digits()`` that is not already taken as ``users.username``."""
+    c = conn.cursor()
+    for _ in range(64):
+        candidate = _simple_letters_digits()
+        c.execute("SELECT 1 FROM users WHERE username = ?", (candidate,))
+        if c.fetchone() is None:
+            return candidate
+    raise HTTPException(status_code=500, detail="Could not allocate a unique elder username; retry.")
+
+
+def _simple_elder_password() -> str:
+    """Same shape as username for easy handoff to the patient."""
+    return _simple_letters_digits()
 
 
 def set_inference_runtime(state: dict[str, Any]) -> None:
@@ -63,6 +87,64 @@ def _need_role(claims: dict[str, Any] | None, roles: set[str]) -> dict[str, Any]
     if claims.get("role") not in roles:
         raise HTTPException(status_code=403, detail="Insufficient role")
     return claims
+
+
+def _caregiver_id_for_patient(patient_id: str) -> str | None:
+    init_schema()
+    with get_connection() as conn:
+        c = conn.cursor()
+        c.execute("SELECT caregiver_id FROM patients WHERE id = ?", (patient_id,))
+        row = c.fetchone()
+        if row and row["caregiver_id"]:
+            return str(row["caregiver_id"])
+        c.execute("SELECT caregiver_id FROM caregiver_patient WHERE patient_id = ? LIMIT 1", (patient_id,))
+        row2 = c.fetchone()
+        if row2 and row2["caregiver_id"]:
+            return str(row2["caregiver_id"])
+    return None
+
+
+def _assert_manual_alert_authorized(body: Any, authorization: str | None) -> None:
+    claims = _claims_opt(authorization)
+    if claims is None:
+        raise HTTPException(status_code=401, detail="Authorization required for manual alerts")
+    role = claims.get("role")
+    sub = str(claims["sub"])
+    init_schema()
+    with get_connection() as conn:
+        c = conn.cursor()
+        if role == "elder":
+            c.execute(
+                "SELECT id FROM patients WHERE elder_user_id = ? AND id = ?",
+                (sub, body.patient_id),
+            )
+            if not c.fetchone():
+                raise HTTPException(status_code=403, detail="Patient does not match elder token")
+        elif role == "caregiver":
+            c.execute(
+                """
+                SELECT p.id FROM patients p
+                WHERE p.id = ? AND (
+                  p.caregiver_id = ? OR EXISTS (
+                    SELECT 1 FROM caregiver_patient cp
+                    WHERE cp.patient_id = p.id AND cp.caregiver_id = ?
+                  )
+                )
+                """,
+                (body.patient_id, sub, sub),
+            )
+            if not c.fetchone():
+                raise HTTPException(status_code=403, detail="Caregiver cannot create alert for this patient")
+        else:
+            raise HTTPException(status_code=403, detail="Only elder or caregiver tokens may trigger manual alerts")
+
+
+async def _broadcast_alert_ws(caregiver_id: str | None, payload: dict[str, Any]) -> None:
+    if not caregiver_id:
+        return
+    from flask_backend.app.realtime_hub import hub
+
+    await hub.broadcast_to_caregiver(caregiver_id, payload)
 
 
 # --- Schemas ---
@@ -93,6 +175,10 @@ class PatientLocationBody(BaseModel):
     latitude: float = Field(..., ge=-90, le=90)
     longitude: float = Field(..., ge=-180, le=180)
     accuracy_m: float | None = Field(default=None, ge=0)
+    heading_degrees: float | None = Field(
+        default=None,
+        description="Device compass / course over ground in degrees (0–360) for map direction.",
+    )
 
 
 class PatientCreateBody(BaseModel):
@@ -185,12 +271,6 @@ class AdminPatientCreateBody(BaseModel):
     age: int | None = None
     # If set, must be an existing caregiver user id; also inserts caregiver_patient.
     caregiver_id: str | None = None
-
-
-def count_caregiver_assignments(conn, caregiver_id: str) -> int:
-    c = conn.cursor()
-    c.execute("SELECT COUNT(*) FROM caregiver_patient WHERE caregiver_id = ?", (caregiver_id,))
-    return int(c.fetchone()[0])
 
 
 def _delete_patient_cascade(c: Any, patient_id: str) -> bool:
@@ -352,7 +432,7 @@ def caregiver_login(body: CaregiverLoginBody):
 
 @router.get("/api/v1/caregiver/my-patients")
 def caregiver_my_patients(authorization: Annotated[str | None, Header()] = None):
-    """Patients assigned to the signed-in caretaker (same account can have up to two)."""
+    """Patients assigned to the signed-in caretaker (one per account)."""
     claims = _need_role(_claims_opt(authorization), {"caregiver"})
     cid = str(claims["sub"])
     init_schema()
@@ -369,6 +449,35 @@ def caregiver_my_patients(authorization: Annotated[str | None, Header()] = None)
             for row in rows
         ],
     }
+
+
+@router.delete("/api/v1/caregiver/my-patients/{patient_id}")
+def caregiver_delete_my_patient(patient_id: str, authorization: Annotated[str | None, Header()] = None):
+    """Signed-in caregiver removes a patient they manage (devices, elder login, alerts cascade)."""
+    claims = _need_role(_claims_opt(authorization), {"caregiver"})
+    cid = str(claims["sub"])
+    init_schema()
+    with get_connection() as conn:
+        c = conn.cursor()
+        c.execute(
+            """
+            SELECT p.id FROM patients p
+            WHERE p.id = ?
+              AND (
+                p.caregiver_id = ?
+                OR EXISTS (
+                  SELECT 1 FROM caregiver_patient cp
+                  WHERE cp.patient_id = p.id AND cp.caregiver_id = ?
+                )
+              )
+            """,
+            (patient_id, cid, cid),
+        )
+        if not c.fetchone():
+            raise HTTPException(status_code=404, detail="Patient not found or not linked to this caregiver")
+        if not _delete_patient_cascade(c, patient_id):
+            raise HTTPException(status_code=404, detail="Patient not found")
+    return {"ok": True, "patient_id": patient_id}
 
 
 @router.post("/api/v1/auth/admin/login")
@@ -423,15 +532,10 @@ def patient_credentials(body: PatientCredBody):
 
     with get_connection() as conn:
         tick_fall_escalations(conn)
-        if count_caregiver_assignments(conn, caregiver_id) >= MAX_ELDERS_PER_CAREGIVER:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Maximum {MAX_ELDERS_PER_CAREGIVER} elders per caretaker reached.",
-            )
         pid = uuid.uuid4().hex
         eid = uuid.uuid4().hex
-        username = f"elder_{pid[:8]}"
-        temp_pass = secrets.token_urlsafe(10)
+        username = _pick_unique_elder_username(conn)
+        temp_pass = _simple_elder_password()
         c = conn.cursor()
         c.execute(
             """INSERT INTO patients (id, full_name, age, caregiver_id, home_address, emergency_contact, notes)
@@ -741,9 +845,15 @@ def ingest_live(body: IngestLiveBody):
 
 
 @router.post("/api/v1/alerts/manual")
-def manual_alert(body: ManualAlertBody):
+def manual_alert(
+    body: ManualAlertBody,
+    background_tasks: BackgroundTasks,
+    authorization: Annotated[str | None, Header()] = None,
+):
+    _assert_manual_alert_authorized(body, authorization)
     init_schema()
     aid = uuid.uuid4().hex
+    created = iso_now()
     with get_connection() as conn:
         c = conn.cursor()
         c.execute(
@@ -758,20 +868,23 @@ def manual_alert(body: ManualAlertBody):
                 "open",
                 body.message,
                 1.0,
-                iso_now(),
+                created,
                 1,
             ),
         )
-    return {
+    payload = {
         "id": aid,
         "patient_id": body.patient_id,
         "severity": body.severity,
         "status": "open",
         "message": body.message,
         "score": 1.0,
-        "created_at": iso_now(),
+        "created_at": created,
         "manually_triggered": True,
     }
+    cg = _caregiver_id_for_patient(body.patient_id)
+    background_tasks.add_task(_broadcast_alert_ws, cg, payload)
+    return payload
 
 
 @router.get("/api/v1/alerts")
@@ -910,13 +1023,14 @@ def post_my_location(
         if c.fetchone():
             c.execute(
                 """UPDATE patient_live SET latitude=?, longitude=?, location_accuracy_m=?,
-                   location_updated_at=?, updated_at=? WHERE patient_id=?""",
+                   location_updated_at=?, updated_at=?, heading_degrees=? WHERE patient_id=?""",
                 (
                     body.latitude,
                     body.longitude,
                     body.accuracy_m,
                     now,
                     now,
+                    body.heading_degrees,
                     pid,
                 ),
             )
@@ -926,8 +1040,9 @@ def post_my_location(
                     patient_id, patient_name, session_id, device_id,
                     severity, score, fall_probability, predicted_activity_class,
                     last_message, sample_rate_hz, active_alert_ids, updated_at,
-                    latitude, longitude, location_accuracy_m, location_updated_at
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    latitude, longitude, location_accuracy_m, location_updated_at,
+                    heading_degrees
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     pid,
                     pname,
@@ -945,6 +1060,7 @@ def post_my_location(
                     body.longitude,
                     body.accuracy_m,
                     now,
+                    body.heading_degrees,
                 ),
             )
     return {"ok": True, "patient_id": pid, "location_updated_at": now}
@@ -985,6 +1101,7 @@ def live_patients():
                 "longitude": row["longitude"],
                 "location_accuracy_m": row["location_accuracy_m"],
                 "location_updated_at": row["location_updated_at"],
+                "heading_degrees": row["heading_degrees"] if "heading_degrees" in row.keys() else None,
             }
         )
     return out
@@ -1184,6 +1301,30 @@ def fall_feedback_db(body: FallFeedbackEvent):
     with path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(row, ensure_ascii=False) + "\n")
     return FallFeedbackAck()
+
+
+@router.websocket("/api/v1/ws/caregiver")
+async def caregiver_alerts_ws(websocket: WebSocket, token: str = Query(..., min_length=8)):
+    """Caregiver subscribes with `?token=<JWT>`; receives JSON `{"type":"alert","data":{...}}` on new manual/system alerts."""
+    try:
+        claims = decode_token(token)
+    except Exception:
+        await websocket.close(code=4401)
+        return
+    if claims.get("role") != "caregiver":
+        await websocket.close(code=4403)
+        return
+    cid = str(claims["sub"])
+    from flask_backend.app.realtime_hub import hub
+
+    await hub.register(cid, websocket)
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        pass
+    finally:
+        await hub.unregister(cid, websocket)
 
 
 @router.post("/api/v1/inference/motion", response_model=MotionInferenceResponse)

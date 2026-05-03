@@ -7,7 +7,8 @@ on:
       - master
     paths:
       - flask_backend/**
-      - scripts/**
+      - scripts/inference/**
+      - scripts/baseline_falltype/**
       - .github/workflows/deploy-backend.yml
   workflow_dispatch:
 
@@ -28,11 +29,12 @@ jobs:
             --exclude='flask_backend/__pycache__' \
             --exclude='flask_backend/app/__pycache__' \
             --exclude='flask_backend/stress_reports' \
-            --exclude='scripts/**/__pycache__' \
+            --exclude='__pycache__' \
             -cf deploy.tar \
             captain-definition \
             flask_backend \
-            scripts
+            scripts/inference \
+            scripts/baseline_falltype
 
       - name: Deploy to CapRover
         uses: caprover/deploy-from-github@main

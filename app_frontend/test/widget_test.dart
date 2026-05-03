@@ -10,8 +10,7 @@ void main() {
     await tester.pumpWidget(const ElderlyMonitorApp());
     await tester.pumpAndSettle();
 
-    expect(find.text('Elderly Monitor'), findsOneWidget);
-    expect(find.text('Sign In'), findsWidgets);
-    expect(find.text('Backend URL'), findsNothing);
+    expect(find.text('Who is using this phone?'), findsOneWidget);
+    expect(find.text('I am the caregiver'), findsOneWidget);
   });
 }

@@ -50,31 +50,30 @@ class _RoleLauncherState extends State<RoleLauncher> {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   const Text(
-                    'Choose how you use this device',
+                    'Who is using this phone?',
                     style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700),
                   ),
                   const SizedBox(height: 8),
                   const Text(
-                    'Caretaker: enroll up to two elders, live telemetry, alerts.\n'
-                    'Elder: patient view + fall confirmation dialog.\n'
-                    'Admin: system metrics (caretakers, feedback events).',
-                    style: TextStyle(color: Color(0xFF5D7385)),
+                    'Caregiver: one patient at a time, dashboard, map, and alerts.\n'
+                    'Patient: sign in with the username and password your caregiver gave you.',
+                    style: TextStyle(color: Color(0xFF5D7385), height: 1.45),
                   ),
                   const SizedBox(height: 28),
                   FilledButton(
                     onPressed: () => setState(() => _pick = _LaunchPick.caregiver),
-                    child: const Text('Caretaker console'),
+                    child: const Text('I am the caregiver'),
                   ),
                   const SizedBox(height: 12),
                   FilledButton(
                     style: FilledButton.styleFrom(backgroundColor: const Color(0xFF1B9B8B)),
                     onPressed: () => setState(() => _pick = _LaunchPick.elder),
-                    child: const Text('Elder / patient device'),
+                    child: const Text('I am the patient'),
                   ),
-                  const SizedBox(height: 12),
-                  OutlinedButton(
+                  const SizedBox(height: 48),
+                  TextButton(
                     onPressed: () => setState(() => _pick = _LaunchPick.admin),
-                    child: const Text('Administrator'),
+                    child: const Text('System administrator'),
                   ),
                 ],
               ),

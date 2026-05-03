@@ -334,6 +334,7 @@ class LiveStatusModel {
     this.longitude,
     this.locationAccuracyM,
     this.locationUpdatedAt,
+    this.headingDegrees,
   });
 
   final String patientId;
@@ -353,6 +354,8 @@ class LiveStatusModel {
   final double? longitude;
   final double? locationAccuracyM;
   final DateTime? locationUpdatedAt;
+  /// Compass / course over ground (degrees), when provided by the device.
+  final double? headingDegrees;
 
   bool get hasLiveLocation =>
       latitude != null && longitude != null;
@@ -380,6 +383,7 @@ class LiveStatusModel {
       longitude: (json['longitude'] as num?)?.toDouble(),
       locationAccuracyM: (json['location_accuracy_m'] as num?)?.toDouble(),
       locationUpdatedAt: DateTime.tryParse(json['location_updated_at'] as String? ?? ''),
+      headingDegrees: (json['heading_degrees'] as num?)?.toDouble(),
     );
   }
 }

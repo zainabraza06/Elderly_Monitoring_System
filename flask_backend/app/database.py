@@ -151,6 +151,7 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
         ("longitude", "REAL"),
         ("location_accuracy_m", "REAL"),
         ("location_updated_at", "TEXT"),
+        ("heading_degrees", "REAL"),
     ):
         if col not in existing:
             c.execute(f"ALTER TABLE patient_live ADD COLUMN {col} {decl}")

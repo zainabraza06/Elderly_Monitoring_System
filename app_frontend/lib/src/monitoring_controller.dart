@@ -1,10 +1,13 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_ringtone_player/flutter_ringtone_player.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'api_client.dart';
 import 'models.dart';
@@ -25,6 +28,7 @@ class MonitoringController extends ChangeNotifier {
 
   static const String defaultBackendUrl = 'http://10.0.2.2:8000';
   static const String defaultDeviceLabel = 'Caregiver Phone';
+  static const String elderDeviceLabel = 'Patient phone';
   static const double defaultSampleRateHz = 50.0;
   static const int offlineWindowSizeSamples = 128;
   static const int offlineWindowStepSamples = 64;
@@ -52,6 +56,8 @@ class MonitoringController extends ChangeNotifier {
 
   final BackendApiClient _apiClient;
   final SensorStreamingService _sensorService;
+
+  WebSocketChannel? _caregiverAlertSocket;
 
   /// For elder login / admin tools that need direct HTTP access.
   BackendApiClient get apiClient => _apiClient;
@@ -117,10 +123,17 @@ class MonitoringController extends ChangeNotifier {
   bool get isBusy => _isBusy;
   bool get backendReachable => _backendReachable;
   bool get isStreaming => _isStreaming;
-  bool get hasSetup =>
-      _backendUrl.trim().isNotEmpty &&
-      _patientName.trim().isNotEmpty &&
-      _deviceLabel.trim().isNotEmpty;
+  bool get hasSetup {
+    if (_elderAccessToken != null && _elderAccessToken!.trim().isNotEmpty) {
+      return _backendUrl.trim().isNotEmpty &&
+          _patientId != null &&
+          _patientId!.trim().isNotEmpty &&
+          _patientName.trim().isNotEmpty;
+    }
+    return _backendUrl.trim().isNotEmpty &&
+        _patientName.trim().isNotEmpty &&
+        _deviceLabel.trim().isNotEmpty;
+  }
   bool get isReady => hasSetup && _backendReachable;
 
   String get backendUrl => _backendUrl;
@@ -184,12 +197,8 @@ class MonitoringController extends ChangeNotifier {
         .toList();
   }
 
-  /// Same account: up to two elder enrollments (matches backend `MAX_ELDERS_PER_CAREGIVER`).
-  bool get canEnrollAnotherPatient {
-    final n =
-        _assignedPatients.isNotEmpty ? _assignedPatients.length : _credentialHistory.length;
-    return n < 2;
-  }
+  /// Caregivers may enroll multiple patients; backend does not cap assignments.
+  bool get canEnrollAnotherPatient => true;
 
   GeneratedPatientCredentialModel? get lastGeneratedCredential =>
       _credentialHistory.isEmpty ? null : _credentialHistory.last;
@@ -248,6 +257,7 @@ class MonitoringController extends ChangeNotifier {
     _ensureAutoRefresh();
     unawaited(startLocationTracking());
     unawaited(refreshCaregiverData(silent: true));
+    _connectCaregiverAlertSocketIfNeeded();
     notifyListeners();
   }
 
@@ -273,6 +283,7 @@ class MonitoringController extends ChangeNotifier {
       _apiClient.setBearerToken(_caregiverToken);
       _statusMessage = 'Caregiver account ready.';
       unawaited(refreshCaregiverData(silent: true));
+      _connectCaregiverAlertSocketIfNeeded();
     } catch (error) {
       _lastError = _formatError(error);
       _statusMessage = 'Unable to create caregiver account.';
@@ -302,6 +313,7 @@ class MonitoringController extends ChangeNotifier {
       _apiClient.setBearerToken(_caregiverToken);
       _statusMessage = 'Welcome back $_caregiverName.';
       unawaited(refreshCaregiverData(silent: true));
+      _connectCaregiverAlertSocketIfNeeded();
     } catch (error) {
       _lastError = _formatError(error);
       _statusMessage = 'Unable to sign in.';
@@ -318,18 +330,45 @@ class MonitoringController extends ChangeNotifier {
     String? displayName,
   }) async {
     _caregiverToken = null;
+    _disconnectCaregiverAlertSocket();
     _elderAccessToken = accessToken;
     _apiClient.setBearerToken(accessToken);
     _patientId = patientId;
     if (displayName != null && displayName.isNotEmpty) {
       _patientName = displayName;
     }
+    if (_deviceLabel.trim().isEmpty) {
+      _deviceLabel = elderDeviceLabel;
+    }
     await _persistIdentifiers();
+    await _persistSetup();
     await _persistElderAuth();
     notifyListeners();
   }
 
+  Future<void> deleteEnrolledPatient(String patientId) async {
+    if (patientId.trim().isEmpty) {
+      return;
+    }
+    _isBusy = true;
+    _lastError = null;
+    notifyListeners();
+    try {
+      await _apiClient.deleteCaregiverPatient(patientId.trim());
+      _credentialHistory.removeWhere((c) => c.patientId == patientId.trim());
+      await refreshCaregiverData(silent: true);
+      _statusMessage = 'Patient removed. You can enroll someone new.';
+    } catch (error) {
+      _lastError = _formatError(error);
+      _statusMessage = 'Unable to remove patient.';
+    } finally {
+      _isBusy = false;
+      notifyListeners();
+    }
+  }
+
   Future<void> caregiverLogout() async {
+    _disconnectCaregiverAlertSocket();
     _caregiverToken = null;
     _caregiverName = '';
     _caregiverAuthEmail = '';
@@ -383,7 +422,7 @@ class MonitoringController extends ChangeNotifier {
         notes: notes.trim().isEmpty ? null : notes.trim(),
       );
       _credentialHistory.add(created);
-      while (_credentialHistory.length > 2) {
+      while (_credentialHistory.length > 1) {
         _credentialHistory.removeAt(0);
       }
 
@@ -467,11 +506,17 @@ class MonitoringController extends ChangeNotifier {
       return;
     }
     _lastLocationUploadAt = now;
+    double? heading;
+    final h = p.heading;
+    if (h >= 0 && h <= 360) {
+      heading = h;
+    }
     try {
       await _apiClient.postPatientLocation(
         latitude: p.latitude,
         longitude: p.longitude,
         accuracyM: p.accuracy,
+        headingDegrees: heading,
         bearerToken: token,
       );
     } catch (_) {}
@@ -752,7 +797,9 @@ class MonitoringController extends ChangeNotifier {
     }
 
     if (!hasSetup) {
-      _lastError = 'Complete the backend URL, patient name, and device label first.';
+      _lastError = hasElderSession
+          ? 'Patient sign-in is incomplete. Go back and sign in again.'
+          : 'Complete the backend URL, patient name, and device label first.';
       _statusMessage = 'Setup is incomplete.';
       notifyListeners();
       return;
@@ -809,10 +856,12 @@ class MonitoringController extends ChangeNotifier {
 
       await _persistIdentifiers();
       await _sensorService.start(_handleSensorBatch);
+      await WakelockPlus.enable();
       _statusMessage = 'Monitoring is live. The phone is now streaming sensor batches.';
     } catch (error) {
       _isStreaming = false;
       _sessionId = null;
+      await WakelockPlus.disable();
       _lastError = _formatError(error);
       _statusMessage = 'Unable to start monitoring.';
     } finally {
@@ -845,11 +894,13 @@ class MonitoringController extends ChangeNotifier {
 
       _sessionId = null;
       await _persistIdentifiers();
+      await WakelockPlus.disable();
       _statusMessage = 'Monitoring stopped.';
     } catch (error) {
       _isStreaming = false;
       _sessionId = null;
       await _persistIdentifiers();
+      await WakelockPlus.disable();
       _lastError = _formatError(error);
       _statusMessage =
           'Streaming stopped on the phone, but the backend session may still be open.';
@@ -859,10 +910,67 @@ class MonitoringController extends ChangeNotifier {
     }
   }
 
+  void _disconnectCaregiverAlertSocket() {
+    try {
+      _caregiverAlertSocket?.sink.close();
+    } catch (_) {}
+    _caregiverAlertSocket = null;
+  }
+
+  void _connectCaregiverAlertSocketIfNeeded() {
+    if (!isCaregiverAuthenticated) {
+      _disconnectCaregiverAlertSocket();
+      return;
+    }
+    final tok = _caregiverToken;
+    if (tok == null || tok.isEmpty) {
+      return;
+    }
+    _disconnectCaregiverAlertSocket();
+    try {
+      final base = Uri.parse(_backendUrl);
+      final scheme = base.scheme == 'https' ? 'wss' : 'ws';
+      var p = base.path;
+      if (p.endsWith('/')) {
+        p = p.substring(0, p.length - 1);
+      }
+      final wsPath = '${p.isEmpty ? '' : p}/api/v1/ws/caregiver'.replaceAll('//', '/');
+      final uri = Uri(
+        scheme: scheme,
+        host: base.host,
+        port: base.hasPort ? base.port : null,
+        path: wsPath.startsWith('/') ? wsPath : '/$wsPath',
+        queryParameters: {'token': tok},
+      );
+      final ch = WebSocketChannel.connect(uri);
+      _caregiverAlertSocket = ch;
+      ch.stream.listen(
+        (dynamic raw) {
+          try {
+            final m = jsonDecode(raw as String) as Map<String, dynamic>;
+            if (m['type'] == 'alert') {
+              unawaited(refreshCaregiverData(silent: true));
+            }
+          } catch (_) {}
+        },
+        onError: (_) {},
+        onDone: () {},
+      );
+    } catch (_) {
+      _caregiverAlertSocket = null;
+    }
+  }
+
   Future<void> triggerEmergencyAlert() async {
     await _ensureInitialized();
 
-    if (_patientName.trim().isEmpty) {
+    if (_patientId == null || _patientId!.trim().isEmpty) {
+      _lastError = 'Patient session is not ready. Sign in again.';
+      _statusMessage = 'Emergency alert was not sent.';
+      notifyListeners();
+      return;
+    }
+    if (!hasElderSession && _patientName.trim().isEmpty) {
       _lastError = 'Add a patient name before sending an emergency alert.';
       _statusMessage = 'Emergency alert was not sent.';
       notifyListeners();
@@ -912,26 +1020,28 @@ class MonitoringController extends ChangeNotifier {
     }
 
     try {
-      final summaryFuture = _apiClient.getSummary();
-      final liveFuture = _apiClient.getLivePatients();
-      final alertsFuture = _apiClient.getAlerts();
-      final responses = await Future.wait<Object>([
-        summaryFuture,
-        liveFuture,
-        alertsFuture,
-      ]);
-      _summary = responses[0] as SystemSummaryModel;
-      _livePatients = responses[1] as List<LiveStatusModel>;
-      _caregiverAlerts = responses[2] as List<AlertRecordModel>;
-
       if (isCaregiverAuthenticated) {
+        final summaryFuture = _apiClient.getSummary();
+        final liveFuture = _apiClient.getLivePatients();
+        final alertsFuture = _apiClient.getAlerts();
+        final responses = await Future.wait<Object>([
+          summaryFuture,
+          liveFuture,
+          alertsFuture,
+        ]);
+        _summary = responses[0] as SystemSummaryModel;
+        _livePatients = responses[1] as List<LiveStatusModel>;
+        _caregiverAlerts = responses[2] as List<AlertRecordModel>;
         try {
           _assignedPatients = await _apiClient.getCaregiverMyPatients();
         } catch (_) {
           // Keep previous assignment list if this endpoint is unavailable.
         }
       } else {
+        _summary = null;
+        _caregiverAlerts = <AlertRecordModel>[];
         _assignedPatients = <CaregiverAssignedPatientModel>[];
+        _livePatients = await _apiClient.getLivePatients();
       }
 
       if (_patientId != null) {
@@ -1288,10 +1398,12 @@ class MonitoringController extends ChangeNotifier {
 
   @override
   void dispose() {
+    _disconnectCaregiverAlertSocket();
     _autoRefreshTimer?.cancel();
     _stopAlarmIfPlaying();
     _locationSubscription?.cancel();
     unawaited(_sensorService.stop());
+    unawaited(WakelockPlus.disable());
     super.dispose();
   }
 }

@@ -41,6 +41,8 @@ dependencies:
   flutter_map: ^8.3.0
   latlong2: ^0.9.1
   url_launcher: ^6.3.1
+  web_socket_channel: ^3.0.1
+  wakelock_plus: ^1.2.8
 
 dev_dependencies:
   flutter_test:

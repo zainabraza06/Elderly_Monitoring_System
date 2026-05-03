@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
@@ -165,7 +167,6 @@ class MonitoringShell extends StatefulWidget {
 
 class _MonitoringShellState extends State<MonitoringShell> {
   int _tabIndex = 0;
-  bool _patientMode = false;
 
   @override
   void initState() {
@@ -173,6 +174,25 @@ class _MonitoringShellState extends State<MonitoringShell> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       widget.controller.refreshCaregiverData(silent: true);
     });
+  }
+
+  void _openAlertsSheet(BuildContext context) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (ctx) {
+        return DraggableScrollableSheet(
+          expand: false,
+          initialChildSize: 0.72,
+          minChildSize: 0.38,
+          maxChildSize: 0.96,
+          builder: (_, scrollController) {
+            return AlertsScreen(controller: widget.controller, scrollController: scrollController);
+          },
+        );
+      },
+    );
   }
 
   @override
@@ -184,25 +204,18 @@ class _MonitoringShellState extends State<MonitoringShell> {
         if (!controller.isCaregiverAuthenticated) {
           return CaregiverAuthScreen(controller: controller);
         }
-        final body = _patientMode
-            ? PatientModeHome(controller: controller)
-            : _buildCaregiverTabs(controller);
 
         return Scaffold(
           appBar: AppBar(
-            title: Text(_patientMode ? 'Patient Mode' : 'Caregiver Console'),
+            title: const Text('Caregiver'),
             actions: [
-              Padding(
-                padding: const EdgeInsets.only(right: 12),
-                child: SegmentedButton<bool>(
-                  segments: const [
-                    ButtonSegment<bool>(value: false, label: Text('Caregiver')),
-                    ButtonSegment<bool>(value: true, label: Text('Patient')),
-                  ],
-                  selected: {_patientMode},
-                  onSelectionChanged: (value) {
-                    setState(() => _patientMode = value.first);
-                  },
+              IconButton(
+                tooltip: 'Alerts',
+                onPressed: () => _openAlertsSheet(context),
+                icon: Badge(
+                  isLabelVisible: controller.caregiverAlerts.isNotEmpty,
+                  label: Text('${controller.caregiverAlerts.length}'),
+                  child: const Icon(Icons.notifications_outlined),
                 ),
               ),
             ],
@@ -237,7 +250,7 @@ class _MonitoringShellState extends State<MonitoringShell> {
                         ),
                       ),
                     ),
-                  Expanded(child: body),
+                  Expanded(child: _buildCaregiverTabBody(controller, context)),
                 ],
               ),
               if (controller.isBusy)
@@ -247,37 +260,46 @@ class _MonitoringShellState extends State<MonitoringShell> {
                 ),
             ],
           ),
-          bottomNavigationBar: _patientMode
-              ? null
-              : NavigationBar(
-                  selectedIndex: _tabIndex,
-                  onDestinationSelected: (value) => setState(() => _tabIndex = value),
-                  destinations: const [
-                    NavigationDestination(icon: Icon(Icons.home_outlined), label: 'Home'),
-                    NavigationDestination(icon: Icon(Icons.badge_outlined), label: 'Enrollment'),
-                    NavigationDestination(icon: Icon(Icons.monitor_heart_outlined), label: 'Live'),
-                    NavigationDestination(icon: Icon(Icons.notification_important_outlined), label: 'Alerts'),
-                    NavigationDestination(icon: Icon(Icons.insights_outlined), label: 'Insights'),
-                    NavigationDestination(icon: Icon(Icons.person_outline), label: 'Profile'),
-                    NavigationDestination(icon: Icon(Icons.settings_outlined), label: 'Settings'),
-                  ],
-                ),
+          bottomNavigationBar: NavigationBar(
+            selectedIndex: _tabIndex,
+            onDestinationSelected: (value) => setState(() => _tabIndex = value),
+            destinations: const [
+              NavigationDestination(
+                icon: Icon(Icons.dashboard_outlined),
+                selectedIcon: Icon(Icons.dashboard),
+                label: 'Dashboard',
+              ),
+              NavigationDestination(icon: Icon(Icons.person_add_alt_1_outlined), label: 'Enrollment'),
+              NavigationDestination(icon: Icon(Icons.map_outlined), label: 'Map'),
+              NavigationDestination(icon: Icon(Icons.monitor_heart_outlined), label: 'Live'),
+              NavigationDestination(icon: Icon(Icons.insights_outlined), label: 'Insights'),
+              NavigationDestination(icon: Icon(Icons.settings_outlined), label: 'Settings'),
+            ],
+          ),
         );
       },
     );
   }
 
-  Widget _buildCaregiverTabs(MonitoringController controller) {
-    final tabs = <Widget>[
-      CaregiverDashboard(controller: controller, openAlerts: () => setState(() => _tabIndex = 3)),
-      CaregiverEnrollmentScreen(controller: controller),
-      LiveMonitoringScreen(controller: controller),
-      AlertsScreen(controller: controller),
-      InsightsScreen(controller: controller),
-      PatientProfileScreen(controller: controller),
-      SettingsScreen(controller: controller),
-    ];
-    return tabs[_tabIndex];
+  Widget _buildCaregiverTabBody(MonitoringController controller, BuildContext context) {
+    switch (_tabIndex) {
+      case 0:
+        return CaregiverDashboard(
+          controller: controller,
+          onShowAllAlerts: () => _openAlertsSheet(context),
+        );
+      case 1:
+        return CaregiverEnrollmentScreen(controller: controller);
+      case 2:
+        return CaregiverMapTabScreen(controller: controller);
+      case 3:
+        return LiveMonitoringScreen(controller: controller);
+      case 4:
+        return InsightsScreen(controller: controller);
+      case 5:
+      default:
+        return SettingsScreen(controller: controller);
+    }
   }
 }
 
@@ -433,59 +455,112 @@ class _CaregiverEnrollmentScreenState extends State<CaregiverEnrollmentScreen> {
   Widget build(BuildContext context) {
     final controller = widget.controller;
     final history = controller.credentialHistory;
+    final assigned = controller.assignedPatients;
+    final enrolled = assigned.isNotEmpty
+        ? assigned.first
+        : (history.isNotEmpty
+            ? CaregiverAssignedPatientModel(
+                id: history.last.patientId,
+                fullName: history.last.patientName,
+                age: null,
+              )
+            : null);
+
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        _StatusBanner(
-          color: const Color(0xFF2A7DA8),
-          title: 'Patient Enrollment',
+        const _StatusBanner(
+          color: Color(0xFF2A7DA8),
+          title: 'Enrollment',
           message:
-              'One caretaker account can hold up to two patients. '
-              'Use “Generate credentials” for each person, then share the login with their device.',
+              'You can have one patient on this account. Share generated credentials only with their phone. '
+              'To replace them, remove the current patient first.',
         ),
-        if (!controller.canEnrollAnotherPatient) ...[
-          const SizedBox(height: 8),
-          const _StatusBanner(
-            color: Color(0xFF4A708F),
-            title: 'Patient limit reached',
-            message: 'This account already has two patients. Remove or reassign on the server if you need a change.',
+        if (enrolled != null) ...[
+          const SizedBox(height: 14),
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: _cardDecoration(),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  enrolled.fullName,
+                  style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 20),
+                ),
+                const SizedBox(height: 6),
+                Text('Patient ID: ${enrolled.id}', style: const TextStyle(color: Color(0xFF5D7385), fontSize: 13)),
+                if (history.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  _StatCard(label: 'Elder username', value: history.last.username),
+                  const SizedBox(height: 6),
+                  _StatCard(label: 'Temporary password', value: history.last.temporaryPassword),
+                ],
+                const SizedBox(height: 16),
+                OutlinedButton.icon(
+                  onPressed: controller.isBusy
+                      ? null
+                      : () async {
+                          final ok = await showDialog<bool>(
+                            context: context,
+                            builder: (ctx) => AlertDialog(
+                              title: const Text('Remove patient?'),
+                              content: const Text(
+                                'This deletes their login, devices, and alerts on the server. You can enroll someone new afterward.',
+                              ),
+                              actions: [
+                                TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+                                FilledButton(
+                                  onPressed: () => Navigator.pop(ctx, true),
+                                  child: const Text('Remove'),
+                                ),
+                              ],
+                            ),
+                          );
+                          if (ok == true && context.mounted) {
+                            await controller.deleteEnrolledPatient(enrolled.id);
+                          }
+                        },
+                  icon: const Icon(Icons.delete_outline),
+                  label: const Text('Remove patient'),
+                ),
+              ],
+            ),
           ),
         ],
-        const SizedBox(height: 12),
-        Container(
-          padding: const EdgeInsets.all(16),
-          decoration: _cardDecoration(),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              TextField(controller: _nameCtrl, decoration: const InputDecoration(labelText: 'Patient Name')),
-              const SizedBox(height: 8),
-              TextField(
-                controller: _ageCtrl,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(labelText: 'Age'),
-              ),
-              const SizedBox(height: 8),
-              TextField(controller: _homeCtrl, decoration: const InputDecoration(labelText: 'Home Address')),
-              const SizedBox(height: 8),
-              TextField(
-                controller: _contactCtrl,
-                decoration: const InputDecoration(labelText: 'Emergency Contact'),
-              ),
-              const SizedBox(height: 8),
-              TextField(controller: _notesCtrl, decoration: const InputDecoration(labelText: 'Notes')),
-              const SizedBox(height: 12),
-              FilledButton.icon(
-                onPressed: (controller.isBusy || !controller.canEnrollAnotherPatient) ? null : _generate,
-                icon: const Icon(Icons.vpn_key_outlined),
-                label: const Text('Generate credentials for patient'),
-              ),
-            ],
-          ),
-        ),
-        for (var i = history.length - 1; i >= 0; i--) ...[
+        if (enrolled == null) ...[
           const SizedBox(height: 12),
-          _GeneratedCredentialCard(credential: history[i], index: history.length - i),
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: _cardDecoration(),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                TextField(controller: _nameCtrl, decoration: const InputDecoration(labelText: 'Patient name')),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: _ageCtrl,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(labelText: 'Age'),
+                ),
+                const SizedBox(height: 8),
+                TextField(controller: _homeCtrl, decoration: const InputDecoration(labelText: 'Home address')),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: _contactCtrl,
+                  decoration: const InputDecoration(labelText: 'Emergency contact'),
+                ),
+                const SizedBox(height: 8),
+                TextField(controller: _notesCtrl, decoration: const InputDecoration(labelText: 'Notes')),
+                const SizedBox(height: 12),
+                FilledButton.icon(
+                  onPressed: (controller.isBusy || !controller.canEnrollAnotherPatient) ? null : _generate,
+                  icon: const Icon(Icons.vpn_key_outlined),
+                  label: const Text('Generate credentials'),
+                ),
+              ],
+            ),
+          ),
         ],
       ],
     );
@@ -563,10 +638,10 @@ LiveStatusModel? _worstLiveAmong(
 }
 
 class CaregiverDashboard extends StatelessWidget {
-  const CaregiverDashboard({super.key, required this.controller, required this.openAlerts});
+  const CaregiverDashboard({super.key, required this.controller, required this.onShowAllAlerts});
 
   final MonitoringController controller;
-  final VoidCallback openAlerts;
+  final VoidCallback onShowAllAlerts;
 
   @override
   Widget build(BuildContext context) {
@@ -577,14 +652,14 @@ class CaregiverDashboard extends StatelessWidget {
     final overviewSeverity = overviewLive?.severity ?? 'low';
     final overviewText = overviewLive?.lastMessage ??
         (patients.isEmpty
-            ? 'Enroll one or two patients from the Enrollment tab.'
-            : 'When each patient signs in on their device, their live status appears here.');
+            ? 'Enroll one patient from the Enrollment tab. They sign in on their own device.'
+            : 'When your patient signs in on their device, live status appears here.');
 
     final children = <Widget>[
-      if (patients.length > 1)
+      if (patients.isNotEmpty)
         const Padding(
           padding: EdgeInsets.only(bottom: 8),
-          child: Text('Your patients', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 18)),
+          child: Text('Your patient', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 18)),
         ),
       _StatusBanner(
         color: _severityColor(overviewSeverity),
@@ -691,13 +766,39 @@ class CaregiverDashboard extends StatelessWidget {
       }
     }
 
+    final alerts = controller.caregiverAlerts;
+    if (alerts.isNotEmpty) {
+      children.addAll([
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            const Text('Open alerts', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
+            const Spacer(),
+            TextButton(onPressed: onShowAllAlerts, child: Text('View all (${alerts.length})')),
+          ],
+        ),
+        const SizedBox(height: 6),
+        ...alerts.take(3).map(
+              (a) => Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: _AlertCard(
+                  alert: a,
+                  onAcknowledge: () => controller.acknowledgeAlert(a.id),
+                  onResolve: () => controller.resolveAlert(a.id),
+                ),
+              ),
+            ),
+      ]);
+    }
+
     children.addAll([
+      const SizedBox(height: 8),
       Row(
         children: [
           Expanded(
             child: FilledButton.icon(
               onPressed: () => controller.refreshCaregiverData(),
-              icon: const Icon(Icons.visibility_outlined),
+              icon: const Icon(Icons.refresh),
               label: const Text('Refresh'),
             ),
           ),
@@ -705,9 +806,9 @@ class CaregiverDashboard extends StatelessWidget {
           Expanded(
             child: FilledButton.icon(
               style: FilledButton.styleFrom(backgroundColor: const Color(0xFFC2453F)),
-              onPressed: openAlerts,
-              icon: const Icon(Icons.warning_amber_rounded),
-              label: const Text('Emergency Actions'),
+              onPressed: onShowAllAlerts,
+              icon: const Icon(Icons.notifications_active_outlined),
+              label: const Text('Alerts'),
             ),
           ),
         ],
@@ -757,16 +858,7 @@ class LiveMonitoringScreen extends StatelessWidget {
         const SizedBox(height: 10),
         _StatCard(label: 'Alert Level', value: _severityLabel(severity)),
         const SizedBox(height: 16),
-        const Text('Elder locations', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 18)),
-        const SizedBox(height: 8),
-        const Text(
-          'Last GPS shared from each elder device (sign in as elder + enable location).',
-          style: TextStyle(color: Color(0xFF5D7385), fontSize: 13),
-        ),
-        const SizedBox(height: 12),
-        _CaregiverPatientsLocationMap(livePatients: controller.livePatients),
-        const SizedBox(height: 16),
-        const Text('Recent Timeline', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 18)),
+        const Text('Recent timeline', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 18)),
         const SizedBox(height: 8),
         _TimelineItem(label: _formatDateTime(DateTime.now().subtract(const Duration(minutes: 1))), text: 'Monitoring active'),
         _TimelineItem(label: _formatDateTime(controller.lastTransmissionAt), text: 'Latest movement analyzed'),
@@ -776,10 +868,43 @@ class LiveMonitoringScreen extends StatelessWidget {
   }
 }
 
-class AlertsScreen extends StatelessWidget {
-  const AlertsScreen({super.key, required this.controller});
+/// Full-screen map tab (OpenStreetMap tiles). Patient location comes from backend live feed.
+class CaregiverMapTabScreen extends StatelessWidget {
+  const CaregiverMapTabScreen({super.key, required this.controller});
 
   final MonitoringController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        const Text(
+          'Live map',
+          style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
+        ),
+        const SizedBox(height: 8),
+        const Text(
+          'Shows the last GPS point the patient device shared with the server. The elder must sign in on their phone and enable location.',
+          style: TextStyle(color: Color(0xFF5D7385), fontSize: 14),
+        ),
+        const SizedBox(height: 14),
+        CaregiverPatientsLocationMap(livePatients: controller.livePatients, mapHeight: 420),
+        const SizedBox(height: 8),
+        const Text(
+          'Map data © OpenStreetMap contributors',
+          style: TextStyle(fontSize: 11, color: Color(0xFF7A8B99)),
+        ),
+      ],
+    );
+  }
+}
+
+class AlertsScreen extends StatelessWidget {
+  const AlertsScreen({super.key, required this.controller, this.scrollController});
+
+  final MonitoringController controller;
+  final ScrollController? scrollController;
 
   @override
   Widget build(BuildContext context) {
@@ -787,6 +912,7 @@ class AlertsScreen extends StatelessWidget {
     return RefreshIndicator(
       onRefresh: () => controller.refreshCaregiverData(),
       child: ListView(
+        controller: scrollController,
         padding: const EdgeInsets.all(16),
         children: [
           if (alerts.isEmpty)
@@ -863,152 +989,12 @@ class InsightsScreen extends StatelessWidget {
             message:
                 '${summary.activeSessions} active monitoring sessions and ${summary.openAlerts} open alerts across ${summary.totalPatients} patients.',
           ),
-        ],
-      ],
-    );
-  }
-}
-
-class PatientProfileScreen extends StatefulWidget {
-  const PatientProfileScreen({super.key, required this.controller});
-
-  final MonitoringController controller;
-
-  @override
-  State<PatientProfileScreen> createState() => _PatientProfileScreenState();
-}
-
-class _PatientProfileScreenState extends State<PatientProfileScreen> {
-  Future<void> _editProfile() async {
-    final controller = widget.controller;
-    final nameCtrl = TextEditingController(text: controller.patientName);
-    final ageCtrl = TextEditingController(text: controller.patientAge?.toString() ?? '');
-    final noteCtrl = TextEditingController(text: controller.medicalNotes);
-    final contactCtrl = TextEditingController(text: controller.emergencyContact);
-
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      builder: (context) {
-        return Padding(
-          padding: EdgeInsets.fromLTRB(16, 16, 16, 16 + MediaQuery.of(context).viewInsets.bottom),
-          child: SingleChildScrollView(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Text('Update Patient Profile', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 18)),
-                const SizedBox(height: 12),
-                TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: 'Name')),
-                const SizedBox(height: 8),
-                TextField(controller: ageCtrl, decoration: const InputDecoration(labelText: 'Age')),
-                const SizedBox(height: 8),
-                TextField(controller: noteCtrl, decoration: const InputDecoration(labelText: 'Medical notes')),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: contactCtrl,
-                  decoration: const InputDecoration(labelText: 'Emergency contact'),
-                ),
-                const SizedBox(height: 12),
-                FilledButton(
-                  onPressed: () async {
-                    await controller.updateProfile(
-                      patientName: nameCtrl.text,
-                      patientAgeText: ageCtrl.text,
-                      medicalNotes: noteCtrl.text,
-                      emergencyContact: contactCtrl.text,
-                    );
-                    if (context.mounted) Navigator.pop(context);
-                  },
-                  child: const Text('Save'),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-
-    nameCtrl.dispose();
-    ageCtrl.dispose();
-    noteCtrl.dispose();
-    contactCtrl.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final controller = widget.controller;
-    return ListView(
-      padding: const EdgeInsets.all(16),
-      children: [
-        Container(
-          padding: const EdgeInsets.all(16),
-          decoration: _cardDecoration(),
-          child: Row(
-            children: [
-              const CircleAvatar(radius: 28, child: Icon(Icons.person_outline)),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      controller.patientName.isEmpty ? 'Monitored Patient' : controller.patientName,
-                      style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 18),
-                    ),
-                    Text(controller.patientAge == null ? 'Age not set' : '${controller.patientAge} years'),
-                  ],
-                ),
-              ),
-              IconButton(
-                onPressed: _editProfile,
-                icon: const Icon(Icons.edit_outlined),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 12),
-        _StatCard(label: 'Medical Notes', value: controller.medicalNotes.isEmpty ? 'Not provided' : controller.medicalNotes),
-        const SizedBox(height: 10),
-        _StatCard(
-          label: 'Emergency Contact',
-          value: controller.emergencyContact.isEmpty ? 'Not provided' : controller.emergencyContact,
-        ),
-        const SizedBox(height: 10),
-        _StatCard(
-          label: 'Device Status',
-          value: controller.isStreaming ? 'Monitoring active' : 'Monitoring paused',
-        ),
-        const SizedBox(height: 10),
-        _StatCard(
-          label: 'Home Location',
-          value: controller.hasHomeLocation
-              ? '${controller.homeLatitude!.toStringAsFixed(5)}, ${controller.homeLongitude!.toStringAsFixed(5)}'
-              : 'Not set yet',
-        ),
-        const SizedBox(height: 10),
-        Wrap(
-          spacing: 10,
-          runSpacing: 10,
-          children: [
-            FilledButton.icon(
-              onPressed: controller.setHomeLocationFromCurrent,
-              icon: const Icon(Icons.home_outlined),
-              label: const Text('Set Home from Current'),
-            ),
-            OutlinedButton.icon(
-              onPressed: controller.hasHomeLocation ? controller.clearHomeLocation : null,
-              icon: const Icon(Icons.delete_outline),
-              label: const Text('Clear Home'),
-            ),
-          ],
-        ),
-        if (controller.locationError != null) ...[
-          const SizedBox(height: 10),
-          _StatusBanner(
-            color: const Color(0xFFB53B34),
-            title: 'Location Notice',
-            message: controller.locationError!,
+        ] else ...[
+          const SizedBox(height: 12),
+          const _StatusBanner(
+            color: Color(0xFF6B7C8D),
+            title: 'Backend summary',
+            message: 'Sign in as caregiver and ensure the server is reachable to load /api/v1/summary.',
           ),
         ],
       ],
@@ -1016,270 +1002,60 @@ class _PatientProfileScreenState extends State<PatientProfileScreen> {
   }
 }
 
-class SettingsScreen extends StatefulWidget {
+class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key, required this.controller});
 
   final MonitoringController controller;
 
   @override
-  State<SettingsScreen> createState() => _SettingsScreenState();
-}
-
-class _SettingsScreenState extends State<SettingsScreen> {
-  late final TextEditingController _emailController;
-
-  @override
-  void initState() {
-    super.initState();
-    _emailController = TextEditingController(text: widget.controller.caregiverEmail);
-  }
-
-  @override
-  void didUpdateWidget(covariant SettingsScreen oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    final latest = widget.controller.caregiverEmail;
-    if (_emailController.text != latest) {
-      _emailController.text = latest;
-    }
-  }
-
-  @override
-  void dispose() {
-    _emailController.dispose();
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
-    final controller = widget.controller;
     return ListView(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(20),
       children: [
-        SwitchListTile(
-          title: const Text('Notifications'),
-          subtitle: const Text('Receive immediate risk and emergency updates'),
-          value: controller.notificationsEnabled,
-          onChanged: controller.setNotificationsEnabled,
-        ),
-        const SizedBox(height: 8),
+        const Text('Settings', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
+        const SizedBox(height: 16),
         Container(
-          padding: const EdgeInsets.all(16),
           decoration: _cardDecoration(),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('Alert Delivery', style: TextStyle(fontWeight: FontWeight.w700)),
-              const SizedBox(height: 8),
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                title: const Text('Email Alerts'),
-                subtitle: const Text('Send critical alerts to caregiver email'),
-                value: controller.alertViaEmail,
-                onChanged: controller.notificationsEnabled ? controller.setAlertViaEmail : null,
-              ),
-              if (controller.alertViaEmail) ...[
-                TextField(
-                  controller: _emailController,
-                  keyboardType: TextInputType.emailAddress,
-                  decoration: const InputDecoration(
-                    labelText: 'Caregiver Email',
-                    hintText: 'caregiver@example.com',
-                  ),
-                  onSubmitted: controller.setCaregiverEmail,
-                ),
-                const SizedBox(height: 8),
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: FilledButton(
-                    onPressed: () => controller.setCaregiverEmail(_emailController.text),
-                    child: const Text('Save Email'),
-                  ),
-                ),
-              ],
-              const SizedBox(height: 6),
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                title: const Text('Alarm Sound'),
-                subtitle: const Text('Play loud in-app alarm for severe alerts'),
-                value: controller.alertViaAlarm,
-                onChanged: controller.notificationsEnabled ? controller.setAlertViaAlarm : null,
-              ),
-              if (controller.alertViaAlarm && controller.notificationsEnabled)
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: TextButton.icon(
-                    onPressed: controller.triggerTestAlarm,
-                    icon: const Icon(Icons.play_arrow_rounded),
-                    label: const Text('Test Alarm'),
-                  ),
-                ),
-            ],
+          child: SwitchListTile(
+            title: const Text('Alarm for severe alerts'),
+            subtitle: const Text('Play an in-app sound when a serious alert needs attention'),
+            value: controller.alertViaAlarm,
+            onChanged: (v) => controller.setAlertViaAlarm(v),
           ),
         ),
-        const SizedBox(height: 8),
-        Container(
-          padding: const EdgeInsets.all(16),
-          decoration: _cardDecoration(),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('Alert Sensitivity', style: TextStyle(fontWeight: FontWeight.w700)),
-              const SizedBox(height: 10),
-              SegmentedButton<String>(
-                segments: const [
-                  ButtonSegment(value: 'low', label: Text('Low')),
-                  ButtonSegment(value: 'medium', label: Text('Medium')),
-                  ButtonSegment(value: 'high', label: Text('High')),
-                ],
-                selected: {controller.alertSensitivity},
-                onSelectionChanged: (value) => controller.setAlertSensitivity(value.first),
-              ),
-            ],
+        const SizedBox(height: 24),
+        SizedBox(
+          width: double.infinity,
+          child: FilledButton.icon(
+            onPressed: controller.caregiverLogout,
+            icon: const Icon(Icons.logout),
+            label: const Text('Log out'),
           ),
-        ),
-        const SizedBox(height: 8),
-        SwitchListTile(
-          title: const Text('Live Location Tracking'),
-          subtitle: const Text('Share location for caregiver visibility and patient guidance'),
-          value: controller.locationTrackingEnabled,
-          onChanged: (enabled) {
-            if (enabled) {
-              controller.startLocationTracking();
-            } else {
-              controller.stopLocationTracking();
-            }
-          },
-        ),
-        if (controller.locationError != null)
-          _StatusBanner(
-            color: const Color(0xFFB53B34),
-            title: 'Location Access',
-            message: controller.locationError!,
-          ),
-        const SizedBox(height: 12),
-        FilledButton.icon(
-          onPressed: controller.isStreaming ? controller.stopMonitoring : controller.startMonitoring,
-          icon: Icon(controller.isStreaming ? Icons.pause_circle_outline : Icons.play_circle_outline),
-          label: Text(controller.isStreaming ? 'Pause Monitoring' : 'Activate Monitoring'),
-        ),
-        const SizedBox(height: 10),
-        OutlinedButton.icon(
-          onPressed: controller.caregiverLogout,
-          icon: const Icon(Icons.logout),
-          label: const Text('Sign Out Caregiver'),
         ),
       ],
     );
   }
 }
 
-class PatientModeHome extends StatelessWidget {
+class PatientModeHome extends StatefulWidget {
   const PatientModeHome({super.key, required this.controller});
 
   final MonitoringController controller;
 
   @override
-  Widget build(BuildContext context) {
-    final severity = controller.liveStatus?.severity ?? 'low';
-    return ListView(
-      padding: const EdgeInsets.all(16),
-      children: [
-        Container(
-          padding: const EdgeInsets.all(18),
-          decoration: BoxDecoration(
-            color: _severityColor(severity).withValues(alpha: 0.12),
-            borderRadius: BorderRadius.circular(20),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('You are safe', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 26)),
-              const SizedBox(height: 8),
-              Text(controller.isStreaming ? 'Monitoring is active' : 'Monitoring will resume shortly'),
-            ],
-          ),
-        ),
-        if (controller.hasElderSession) ...[
-          const SizedBox(height: 12),
-          _StatusBanner(
-            color: const Color(0xFF1B9B8B),
-            title: 'Where you are',
-            message: controller.locationTrackingEnabled
-                ? 'Your last position is shared with your caregiver when GPS updates.'
-                : 'Turn on location below to see the map, share your position, and get directions home.',
-          ),
-        ],
-        if (!controller.locationTrackingEnabled) ...[
-          const SizedBox(height: 12),
-          FilledButton.icon(
-            onPressed: () => controller.startLocationTracking(),
-            icon: const Icon(Icons.location_searching_outlined),
-            label: const Text('Enable location & map'),
-          ),
-        ],
-        if (controller.currentPosition != null) ...[
-          const SizedBox(height: 14),
-          const Text('Tracking map', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
-          const SizedBox(height: 8),
-          _LocationMapCard(
-            current: LatLng(controller.currentPosition!.latitude, controller.currentPosition!.longitude),
-            home: controller.hasHomeLocation
-                ? LatLng(controller.homeLatitude!, controller.homeLongitude!)
-                : null,
-            compact: false,
-          ),
-        ],
-        if (controller.currentPosition != null && controller.hasHomeLocation) ...[
-          const SizedBox(height: 12),
-          FilledButton.icon(
-            onPressed: () => controller.openWalkingDirectionsHome(),
-            icon: const Icon(Icons.directions_walk),
-            label: const Text('Get directions home (Google Maps)'),
-          ),
-          const SizedBox(height: 10),
-          _StatusBanner(
-            color: const Color(0xFF2A7DA8),
-            title: 'Direction home',
-            message:
-                '${_distanceKm(controller.currentPosition!.latitude, controller.currentPosition!.longitude, controller.homeLatitude!, controller.homeLongitude!).toStringAsFixed(2)} km away — walk toward ${_bearingDirection(controller.currentPosition!.latitude, controller.currentPosition!.longitude, controller.homeLatitude!, controller.homeLongitude!)}.',
-          ),
-        ],
-        if (controller.currentPosition == null || !controller.hasHomeLocation) ...[
-          const SizedBox(height: 12),
-          const _StatusBanner(
-            color: Color(0xFF2A7DA8),
-            title: 'Home location',
-            message:
-                'Ask your caregiver to save “Home” from their phone while at your house (Settings → Home Location), or set it yourself if you have access.',
-          ),
-        ],
-        const SizedBox(height: 18),
-        FilledButton.icon(
-          style: FilledButton.styleFrom(
-            backgroundColor: const Color(0xFFC2453F),
-            padding: const EdgeInsets.symmetric(vertical: 18),
-          ),
-          onPressed: () => _confirmEmergency(context),
-          icon: const Icon(Icons.sos_outlined),
-          label: const Text('Call for Help'),
-        ),
-        const SizedBox(height: 12),
-        OutlinedButton.icon(
-          onPressed: controller.emergencyContact.isEmpty ? null : () {},
-          icon: const Icon(Icons.phone_outlined),
-          label: const Text('Call Caregiver'),
-        ),
-      ],
-    );
-  }
+  State<PatientModeHome> createState() => _PatientModeHomeState();
+}
 
+class _PatientModeHomeState extends State<PatientModeHome> {
   Future<void> _confirmEmergency(BuildContext context) async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) {
         return AlertDialog(
           title: const Text('Send emergency alert?'),
-          content: const Text('This will immediately notify the caregiver.'),
+          content: const Text(
+            'Your caregiver is notified in real time through the app when this is sent.',
+          ),
           actions: [
             TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
             FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Send Alert')),
@@ -1287,9 +1063,167 @@ class PatientModeHome extends StatelessWidget {
         );
       },
     );
-    if (confirmed == true) {
-      await controller.triggerEmergencyAlert();
+    if (confirmed == true && mounted) {
+      await widget.controller.triggerEmergencyAlert();
     }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: widget.controller,
+      builder: (context, _) {
+        final c = widget.controller;
+        final severity = c.liveStatus?.severity ?? 'low';
+        final pos = c.currentPosition;
+        final heading = pos != null && pos.heading >= 0 && pos.heading <= 360 ? pos.heading : null;
+
+        return ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            Container(
+              padding: const EdgeInsets.all(18),
+              decoration: BoxDecoration(
+                color: _severityColor(severity).withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Your status', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 26)),
+                  const SizedBox(height: 8),
+                  Text(
+                    c.isStreaming
+                        ? 'Protection is on — motion data is sent to your care team.'
+                        : 'Turn on protection to stream motion and detect falls.',
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 14),
+            SwitchListTile(
+              title: const Text('Active protection'),
+              subtitle: const Text(
+                'Uses accelerometer & gyroscope. The phone may stay awake while this is on. '
+                'For best results keep the app open; true background streaming depends on your device.',
+              ),
+              value: c.isStreaming,
+              onChanged: c.isBusy
+                  ? null
+                  : (on) async {
+                      if (on) {
+                        await c.startMonitoring();
+                      } else {
+                        await c.stopMonitoring();
+                      }
+                    },
+            ),
+            if (c.hasElderSession) ...[
+              SwitchListTile(
+                title: const Text('Share live location'),
+                subtitle: const Text('Shows you on the caregiver map and improves directions home.'),
+                value: c.locationTrackingEnabled,
+                onChanged: c.isBusy
+                    ? null
+                    : (on) async {
+                        if (on) {
+                          await c.startLocationTracking();
+                        } else {
+                          await c.stopLocationTracking();
+                        }
+                      },
+              ),
+            ],
+            if (c.locationError != null)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: _StatusBanner(
+                  color: const Color(0xFFB53B34),
+                  title: 'Location',
+                  message: c.locationError!,
+                ),
+              ),
+            if (pos != null) ...[
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  const Text('Your map', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
+                  const Spacer(),
+                  Text(
+                    heading != null ? 'Facing ${_headingToCompassRose(heading!)}' : 'Direction appears when GPS reports heading',
+                    style: const TextStyle(fontSize: 12, color: Color(0xFF5D7385)),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'Blue arrow = your direction of travel when available. Green = home.',
+                style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+              ),
+              const SizedBox(height: 8),
+              _LocationMapCard(
+                key: ValueKey('${pos.latitude}_${pos.longitude}_${heading ?? 'nh'}'),
+                current: LatLng(pos.latitude, pos.longitude),
+                home: c.hasHomeLocation ? LatLng(c.homeLatitude!, c.homeLongitude!) : null,
+                compact: false,
+                headingDegrees: heading,
+              ),
+              const Text(
+                'Map © OpenStreetMap contributors',
+                style: TextStyle(fontSize: 11, color: Color(0xFF7A8B99)),
+              ),
+            ] else if (c.hasElderSession) ...[
+              const SizedBox(height: 8),
+              const _StatusBanner(
+                color: Color(0xFF2A7DA8),
+                title: 'Waiting for GPS',
+                message: 'Enable “Share live location” and allow location access to see the map.',
+              ),
+            ],
+            if (pos != null && c.hasHomeLocation) ...[
+              const SizedBox(height: 12),
+              FilledButton.icon(
+                onPressed: () => c.openWalkingDirectionsHome(),
+                icon: const Icon(Icons.directions_walk),
+                label: const Text('Directions home (Google Maps)'),
+              ),
+              const SizedBox(height: 10),
+              _StatusBanner(
+                color: const Color(0xFF2A7DA8),
+                title: 'Toward home',
+                message:
+                    '${_distanceKm(pos.latitude, pos.longitude, c.homeLatitude!, c.homeLongitude!).toStringAsFixed(2)} km — head ${_bearingDirection(pos.latitude, pos.longitude, c.homeLatitude!, c.homeLongitude!)}.',
+              ),
+            ] else if (c.hasElderSession) ...[
+              const SizedBox(height: 12),
+              const _StatusBanner(
+                color: Color(0xFF2A7DA8),
+                title: 'Home on map',
+                message:
+                    'When your caregiver saves your home address, a green marker and walking directions appear here.',
+              ),
+            ],
+            const SizedBox(height: 18),
+            FilledButton.icon(
+              style: FilledButton.styleFrom(
+                backgroundColor: const Color(0xFFC2453F),
+                padding: const EdgeInsets.symmetric(vertical: 18),
+              ),
+              onPressed: c.isBusy ? null : () => _confirmEmergency(context),
+              icon: const Icon(Icons.sos_outlined),
+              label: const Text('Alert caregiver now'),
+            ),
+            if (c.lastError != null && c.lastError!.trim().isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text(
+                c.lastError!,
+                style: const TextStyle(color: Color(0xFFB53B34), fontSize: 13),
+              ),
+            ],
+          ],
+        );
+      },
+    );
   }
 }
 
@@ -1576,10 +1510,15 @@ class _AlertCard extends StatelessWidget {
   }
 }
 
-class _CaregiverPatientsLocationMap extends StatelessWidget {
-  const _CaregiverPatientsLocationMap({required this.livePatients});
+class CaregiverPatientsLocationMap extends StatelessWidget {
+  const CaregiverPatientsLocationMap({
+    super.key,
+    required this.livePatients,
+    this.mapHeight = 280,
+  });
 
   final List<LiveStatusModel> livePatients;
+  final double mapHeight;
 
   @override
   Widget build(BuildContext context) {
@@ -1612,7 +1551,7 @@ class _CaregiverPatientsLocationMap extends StatelessWidget {
     final center = LatLng(sumLat / n, sumLon / n);
 
     return Container(
-      height: 280,
+      height: mapHeight,
       clipBehavior: Clip.antiAlias,
       decoration: _cardDecoration(),
       child: Column(
@@ -1635,7 +1574,7 @@ class _CaregiverPatientsLocationMap extends StatelessWidget {
                       Marker(
                         point: LatLng(p.latitude!, p.longitude!),
                         width: 160,
-                        height: 44,
+                        height: 52,
                         alignment: Alignment.bottomCenter,
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
@@ -1655,7 +1594,12 @@ class _CaregiverPatientsLocationMap extends StatelessWidget {
                                 overflow: TextOverflow.ellipsis,
                               ),
                             ),
-                            const Icon(Icons.location_on, color: Color(0xFF155A9B), size: 32),
+                            p.headingDegrees != null
+                                ? Transform.rotate(
+                                    angle: (p.headingDegrees! * math.pi / 180) - math.pi / 2,
+                                    child: const Icon(Icons.navigation, color: Color(0xFF155A9B), size: 36),
+                                  )
+                                : const Icon(Icons.location_on, color: Color(0xFF155A9B), size: 32),
                           ],
                         ),
                       ),
@@ -1686,20 +1630,29 @@ class _CaregiverPatientsLocationMap extends StatelessWidget {
 
 class _LocationMapCard extends StatelessWidget {
   const _LocationMapCard({
+    super.key,
     required this.current,
     required this.home,
     required this.compact,
+    this.headingDegrees,
   });
 
   final LatLng current;
   final LatLng? home;
   final bool compact;
+  final double? headingDegrees;
 
   @override
   Widget build(BuildContext context) {
     final points = <LatLng>[if (home != null) home!, current];
+    final Widget youMarker = headingDegrees != null
+        ? Transform.rotate(
+            angle: (headingDegrees! * math.pi / 180) - math.pi / 2,
+            child: const Icon(Icons.navigation, color: Color(0xFF155A9B), size: 40),
+          )
+        : const Icon(Icons.person_pin_circle, color: Color(0xFF155A9B), size: 34);
     return Container(
-      height: compact ? 200 : 260,
+      height: compact ? 200 : 280,
       clipBehavior: Clip.antiAlias,
       decoration: _cardDecoration(),
       child: FlutterMap(
@@ -1726,9 +1679,10 @@ class _LocationMapCard extends StatelessWidget {
             markers: [
               Marker(
                 point: current,
-                width: 40,
-                height: 40,
-                child: const Icon(Icons.person_pin_circle, color: Color(0xFF155A9B), size: 34),
+                width: 48,
+                height: 48,
+                alignment: Alignment.center,
+                child: youMarker,
               ),
               if (home != null)
                 Marker(
@@ -1841,6 +1795,18 @@ String _stabilityText(double riskValue) {
 double _distanceKm(double lat1, double lon1, double lat2, double lon2) {
   const distance = Distance();
   return distance.as(LengthUnit.Kilometer, LatLng(lat1, lon1), LatLng(lat2, lon2));
+}
+
+String _headingToCompassRose(double headingDegrees) {
+  final n = (headingDegrees % 360 + 360) % 360;
+  if (n >= 337.5 || n < 22.5) return 'North';
+  if (n < 67.5) return 'North-East';
+  if (n < 112.5) return 'East';
+  if (n < 157.5) return 'South-East';
+  if (n < 202.5) return 'South';
+  if (n < 247.5) return 'South-West';
+  if (n < 292.5) return 'West';
+  return 'North-West';
 }
 
 String _bearingDirection(double lat1, double lon1, double lat2, double lon2) {

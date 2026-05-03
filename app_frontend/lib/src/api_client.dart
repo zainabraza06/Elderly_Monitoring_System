@@ -251,6 +251,7 @@ class BackendApiClient {
     required double latitude,
     required double longitude,
     double? accuracyM,
+    double? headingDegrees,
     required String bearerToken,
   }) async {
     await _send(
@@ -264,6 +265,7 @@ class BackendApiClient {
           'latitude': latitude,
           'longitude': longitude,
           if (accuracyM != null) 'accuracy_m': accuracyM,
+          if (headingDegrees != null) 'heading_degrees': headingDegrees,
         }),
       ),
     );
@@ -283,7 +285,7 @@ class BackendApiClient {
         .toList();
   }
 
-  /// Caretaker’s enrolled patients (up to two on the same account).
+  /// Caretaker’s enrolled patients (one per account on current backend).
   Future<List<CaregiverAssignedPatientModel>> getCaregiverMyPatients() async {
     final m = _asMap(
       await _send(http.get(_uri('/api/v1/caregiver/my-patients'), headers: _headers())),
@@ -293,6 +295,12 @@ class BackendApiClient {
         .whereType<Map<String, dynamic>>()
         .map(CaregiverAssignedPatientModel.fromJson)
         .toList();
+  }
+
+  Future<void> deleteCaregiverPatient(String patientId) async {
+    await _send(
+      http.delete(_uri('/api/v1/caregiver/my-patients/$patientId'), headers: _headers()),
+    );
   }
 
   Future<List<AlertRecordModel>> getAlerts({

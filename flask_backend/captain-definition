@@ -7,6 +7,8 @@
     "ENV PYTHONUNBUFFERED=1",
     "COPY flask_backend/requirements.txt /tmp/requirements.txt",
     "RUN pip install --no-cache-dir -r /tmp/requirements.txt",
+    "COPY scripts/inference /app/scripts/inference",
+    "COPY scripts/baseline_falltype /app/scripts/baseline_falltype",
     "COPY flask_backend /app/flask_backend",
     "COPY scripts /app/scripts",
     "EXPOSE 8000",
