@@ -10,6 +10,7 @@ import pytest
 
 from flask_backend.app.services.motion_xgb_service import (
     InferenceArtifacts,
+    _fall_type_vector_from_windows,
     load_artifacts,
     run_inference,
 )
@@ -25,6 +26,12 @@ def artifacts(repo_root: Path) -> InferenceArtifacts:
         return load_artifacts(mp, md)
     except FileNotFoundError as e:
         pytest.skip(str(e))
+
+
+def test_fall_type_vector_from_acc_window_is_263(artifacts: InferenceArtifacts) -> None:
+    acc = np.random.default_rng(0).standard_normal((300, 3))
+    v = _fall_type_vector_from_windows(acc, None, None)
+    assert v.shape == (artifacts.fall_type_dim,)
 
 
 def test_manifest_dims_match_scalers(artifacts: InferenceArtifacts, inference_manifest: dict) -> None:

@@ -17,6 +17,11 @@ def model_root() -> Path:
     return (_REPO_ROOT / "models").resolve()
 
 
+def repo_root() -> Path:
+    """Repository root (contains ``models/``, ``scripts/``, ``data/``)."""
+    return _REPO_ROOT.resolve()
+
+
 def inference_manifest_path() -> Path:
     raw = os.environ.get("INFERENCE_MANIFEST")
     if raw:

@@ -1,7 +1,16 @@
 """
 Train Task 1 (fall vs ADL) and Task 2 (ADL multiclass) with 116-D enhanced features.
-Matches the Colab notebook: RobustScaler, SMOTETomek, ADASYN, XGBoost.
-Saves to models/baseline_fall/ and models/baseline_adl/.
+
+Fall detection is delegated to `fall_detection_core.train_fall_binary_pipeline` (same logic as
+`train_fall_detection_mobiact.py` with `--xgb-only`).
+
+For multi-model fall detection + plots, run:
+  scripts/baseline_fall/train_fall_detection_mobiact.py
+
+For Colab-style multi-model ADL (LightGBM, comparison plots, `adl_classifier.pkl`), use:
+  scripts/baseline_adl/train_mobiact_adl.py
+
+This combined script writes XGBoost-only fall artifacts plus ADL XGBoost as before.
 """
 
 from __future__ import annotations
@@ -14,8 +23,6 @@ from pathlib import Path
 
 import joblib
 import numpy as np
-from imblearn.combine import SMOTETomek
-from imblearn.over_sampling import ADASYN, SMOTE
 from sklearn.metrics import accuracy_score, classification_report, f1_score
 from sklearn.model_selection import StratifiedKFold, cross_val_score, train_test_split
 from sklearn.preprocessing import LabelEncoder, RobustScaler
@@ -26,56 +33,11 @@ if str(_REPO / "scripts") not in sys.path:
     sys.path.insert(0, str(_REPO / "scripts"))
 
 from baseline_fall.enhanced_features import ENHANCED_FEATURE_DIM, extract_enhanced_features
+from baseline_fall.fall_detection_core import train_fall_binary_pipeline
 from baseline_fall.mobiact_dataset import discover_data_root, load_sliding_windows
+from baseline_fall.sampling import balance_adl_train
 
 RANDOM_STATE = 42
-
-
-def _balance_fall(X: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    try:
-        smt = SMOTETomek(random_state=RANDOM_STATE, sampling_strategy=0.5)
-        return smt.fit_resample(X, y)
-    except Exception:
-        smote = SMOTE(random_state=RANDOM_STATE, sampling_strategy=0.5)
-        return smote.fit_resample(X, y)
-
-
-def _balance_adl(X: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    try:
-        return ADASYN(random_state=RANDOM_STATE, sampling_strategy="auto").fit_resample(X, y)
-    except Exception:
-        return SMOTE(random_state=RANDOM_STATE, sampling_strategy="auto").fit_resample(X, y)
-
-
-def subject_masks(
-    subject_ids: np.ndarray,
-    y_fall: np.ndarray,
-    frac: float = 0.8,
-) -> tuple[np.ndarray, np.ndarray]:
-    y_len = len(y_fall)
-    subs = list({str(s) for s in subject_ids[:y_len]})
-    rng = np.random.default_rng(RANDOM_STATE)
-    rng.shuffle(subs)
-    if len(subs) < 2:
-        idx = np.arange(y_len)
-        try:
-            tr, te = train_test_split(
-                idx, test_size=0.2, random_state=RANDOM_STATE, stratify=y_fall
-            )
-        except ValueError:
-            tr, te = train_test_split(idx, test_size=0.2, random_state=RANDOM_STATE)
-        train_m = np.zeros(y_len, dtype=bool)
-        test_m = np.zeros(y_len, dtype=bool)
-        train_m[tr] = True
-        test_m[te] = True
-        return train_m, test_m
-
-    n_tr = max(1, int(frac * len(subs)))
-    train_s = set(subs[:n_tr])
-    test_s = set(subs[n_tr:])
-    train_m = np.array([str(s) in train_s for s in subject_ids[:y_len]])
-    test_m = np.array([str(s) in test_s for s in subject_ids[:y_len]])
-    return train_m, test_m
 
 
 def main() -> int:
@@ -100,54 +62,18 @@ def main() -> int:
     y_adl = raw["y_adl"]
     subject_ids = raw["subject_ids"]
 
-    train_m, test_m = subject_masks(subject_ids, y_fall)
-    X_tr, X_te = X_feat[train_m], X_feat[test_m]
-    yf_tr, yf_te = y_fall[train_m], y_fall[test_m]
-
-    scaler_fall = RobustScaler()
-    X_tr_s = scaler_fall.fit_transform(X_tr)
-    X_te_s = scaler_fall.transform(X_te)
-
-    X_tr_bal, yf_tr_bal = _balance_fall(X_tr_s, yf_tr)
-
-    xgb_fall = XGBClassifier(
-        n_estimators=200,
-        max_depth=8,
-        learning_rate=0.1,
-        subsample=0.8,
-        colsample_bytree=0.8,
-        random_state=RANDOM_STATE,
-        n_jobs=-1,
-        verbosity=0,
-        eval_metric="logloss",
-    )
-
-    print("CV (fall, F1)...")
-    cv = StratifiedKFold(5, shuffle=True, random_state=RANDOM_STATE)
-    cv_scores = cross_val_score(xgb_fall, X_tr_bal, yf_tr_bal, cv=cv, scoring="f1", n_jobs=-1)
-    print(f"  CV F1: {cv_scores.mean():.4f} ± {cv_scores.std():.4f}")
-
-    t0 = time.perf_counter()
-    xgb_fall.fit(X_tr_bal, yf_tr_bal)
-    pred_f = xgb_fall.predict(X_te_s)
-    print(f"Fall test — acc={accuracy_score(yf_te, pred_f):.4f}, F1={f1_score(yf_te, pred_f):.4f}, time={time.perf_counter()-t0:.1f}s")
-
     fall_dir = args.models_dir / "baseline_fall"
-    fall_dir.mkdir(parents=True, exist_ok=True)
-    joblib.dump(xgb_fall, fall_dir / "fall_detection_xgboost.pkl")
-    joblib.dump(scaler_fall, fall_dir / "scaler_fall.pkl")
-    (fall_dir / "fall_metrics.json").write_text(
-        json.dumps(
-            {
-                "feature_dim": ENHANCED_FEATURE_DIM,
-                "cv_f1_mean": float(cv_scores.mean()),
-                "cv_f1_std": float(cv_scores.std()),
-                "test_accuracy": float(accuracy_score(yf_te, pred_f)),
-                "test_f1": float(f1_score(yf_te, pred_f)),
-            },
-            indent=2,
-        ),
-        encoding="utf-8",
+    train_fall_binary_pipeline(
+        X_feat,
+        y_fall,
+        subject_ids,
+        models_dir=fall_dir,
+        results_dir=None,
+        random_state=RANDOM_STATE,
+        pick_metric="f1",
+        xgb_only=True,
+        skip_plots=True,
+        skip_cv=False,
     )
     print(f"Saved fall model → {fall_dir}")
 
@@ -172,7 +98,7 @@ def main() -> int:
     Xa_tr_s = scaler_adl.fit_transform(Xa_tr)
     Xa_te_s = scaler_adl.transform(Xa_te)
 
-    Xa_bal, ya_bal = _balance_adl(Xa_tr_s, ya_tr)
+    Xa_bal, ya_bal = balance_adl_train(Xa_tr_s, ya_tr, random_state=RANDOM_STATE)
 
     xgb_adl = XGBClassifier(
         n_estimators=200,
@@ -203,6 +129,7 @@ def main() -> int:
     adl_dir = args.models_dir / "baseline_adl"
     adl_dir.mkdir(parents=True, exist_ok=True)
     joblib.dump(xgb_adl, adl_dir / "adl_classification_xgboost.pkl")
+    joblib.dump(xgb_adl, adl_dir / "adl_classifier.pkl")
     joblib.dump(scaler_adl, adl_dir / "scaler_adl.pkl")
     joblib.dump(le, adl_dir / "adl_label_encoder.pkl")
     (adl_dir / "adl_metrics.json").write_text(

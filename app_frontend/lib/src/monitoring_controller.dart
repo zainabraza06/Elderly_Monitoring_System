@@ -895,7 +895,7 @@ class MonitoringController extends ChangeNotifier {
         final motion = await MotionInferenceHelper.inferFromSamples(
           _apiClient,
           samples,
-          predictFallType: false,
+          predictFallType: true,
         );
         _lastMotionInference = motion;
         _statusMessage =

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import time
 from contextlib import asynccontextmanager
@@ -11,9 +12,10 @@ import xgboost
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 
+from flask_backend.app.schemas_fall_feedback import FallFeedbackAck, FallFeedbackEvent
 from flask_backend.app.schemas_motion import MotionInferenceRequest, MotionInferenceResponse
 from flask_backend.app.services.motion_xgb_service import InferenceArtifacts, load_artifacts, run_inference
-from flask_backend.app.settings import inference_manifest_path, model_root
+from flask_backend.app.settings import inference_manifest_path, model_root, repo_root
 
 
 def _versions() -> dict[str, str]:
@@ -94,7 +96,23 @@ def inference_motion(body: MotionInferenceRequest):
             body.enhanced_features,
             body.fall_type_features,
             predict_fall_type=body.predict_fall_type,
+            acc_window=body.acc_window,
+            gyro_window=body.gyro_window,
+            ori_window=body.ori_window,
         )
         return MotionInferenceResponse(**raw)
     except ValueError as e:
         raise HTTPException(422, detail=str(e)) from e
+
+
+@app.post("/api/v1/events/fall-feedback", response_model=FallFeedbackAck)
+def fall_feedback(body: FallFeedbackEvent):
+    """Append elder/caretaker fall confirmation to JSONL for QA and future model tuning."""
+    log_dir = repo_root() / "data" / "feedback"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    path = log_dir / "fall_events.jsonl"
+    row = body.model_dump()
+    row["_server_logged_at"] = FallFeedbackAck().logged_at
+    with path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(row, ensure_ascii=False) + "\n")
+    return FallFeedbackAck()

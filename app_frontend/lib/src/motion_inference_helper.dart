@@ -21,10 +21,14 @@ class MotionInferenceHelper {
         'Enhanced features length ${features.length} does not match expected $dim.',
       );
     }
+    final sendWindows =
+        predictFallType && fallTypeFeatures == null;
     final raw = await client.inferMotion(
       enhancedFeatures: features,
       fallTypeFeatures: fallTypeFeatures,
       predictFallType: predictFallType,
+      accWindow: sendWindows ? MotionFeatureExtractor.accMatrix300(samples) : null,
+      gyroWindow: sendWindows ? MotionFeatureExtractor.gyroMatrix300(samples) : null,
     );
     return MotionInferenceResponseModel.fromJson(raw);
   }

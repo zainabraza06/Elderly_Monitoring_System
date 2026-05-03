@@ -396,11 +396,15 @@ class BackendApiClient {
   }
 
   /// XGBoost pipeline: `enhancedFeatures` length = `enhanced_feature_dim` in `models/inference_manifest.json`.
-  /// When fall is predicted, send `fallTypeFeatures` with length `fall_type_raw_dim` (263 for Colab fall-type).
+  /// When fall is predicted, send either `fallTypeFeatures` (263-D) or raw `accWindow`/`gyroWindow`/`oriWindow`
+  /// (300×3 each) so the server can build Colab fall-type features.
   Future<Map<String, dynamic>> inferMotion({
     required List<double> enhancedFeatures,
     List<double>? fallTypeFeatures,
     bool predictFallType = true,
+    List<List<double>>? accWindow,
+    List<List<double>>? gyroWindow,
+    List<List<double>>? oriWindow,
   }) async {
     return _asMap(
       await _send(
@@ -411,6 +415,9 @@ class BackendApiClient {
             'enhanced_features': enhancedFeatures,
             if (fallTypeFeatures != null) 'fall_type_features': fallTypeFeatures,
             'predict_fall_type': predictFallType,
+            if (accWindow != null) 'acc_window': accWindow,
+            if (gyroWindow != null) 'gyro_window': gyroWindow,
+            if (oriWindow != null) 'ori_window': oriWindow,
           }),
         ),
       ),

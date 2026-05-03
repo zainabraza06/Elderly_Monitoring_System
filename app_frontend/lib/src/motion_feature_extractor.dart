@@ -86,6 +86,40 @@ class MotionFeatureExtractor {
     return feat;
   }
 
+  /// **300×3** rows for `POST /api/v1/inference/motion` `acc_window` / `gyro_window` (server fall-type path).
+  static List<List<double>> accMatrix300(List<SensorReadingPayload> samples) =>
+      _sensorMatrix300(samples, _accTriplets);
+
+  /// Gyro columns for the same API (rad/s).
+  static List<List<double>> gyroMatrix300(List<SensorReadingPayload> samples) =>
+      _sensorMatrix300(samples, _gyroTriplets);
+
+  static List<double> _accTriplets(SensorReadingPayload s) =>
+      <double>[s.accX, s.accY, s.accZ];
+
+  static List<double> _gyroTriplets(SensorReadingPayload s) =>
+      <double>[s.gyroX, s.gyroY, s.gyroZ];
+
+  static List<List<double>> _sensorMatrix300(
+    List<SensorReadingPayload> samples,
+    List<double> Function(SensorReadingPayload) trip,
+  ) {
+    if (samples.length < 2) {
+      throw ArgumentError('Need at least 2 samples to form a window.');
+    }
+    final n = samples.length;
+    final c0 = List<double>.generate(n, (i) => trip(samples[i])[0]);
+    final c1 = List<double>.generate(n, (i) => trip(samples[i])[1]);
+    final c2 = List<double>.generate(n, (i) => trip(samples[i])[2]);
+    final r0 = n == windowLength ? c0 : _resampleSeries(c0, windowLength);
+    final r1 = n == windowLength ? c1 : _resampleSeries(c1, windowLength);
+    final r2 = n == windowLength ? c2 : _resampleSeries(c2, windowLength);
+    return List<List<double>>.generate(
+      windowLength,
+      (i) => <double>[r0[i], r1[i], r2[i]],
+    );
+  }
+
   static List<double> _resampleSeries(List<double> src, int targetLen) {
     if (src.length == targetLen) return List<double>.from(src);
     final out = <double>[];
