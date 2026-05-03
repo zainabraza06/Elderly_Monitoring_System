@@ -1,6 +1,6 @@
 {
   "schema_version": "1.2",
-  "description": "116-D enhanced features for fall + ADL (RobustScaler); 263-D raw for fall-type. Training: scripts/run_training.py. Inference code: scripts/inference/motion_pipeline.py (loaded via FastAPI).",
+  "description": "SisFall / elderly monitoring — 116-D enhanced features for fall + ADL (RobustScaler); 263-D raw for fall-type. Training: scripts/run_training.py. Added datasets: scripts/sisfall/. Inference: scripts/inference/motion_pipeline.py.",
   "enhanced_feature_dim": 116,
   "fall_type_raw_dim": 263,
   "fall_type_selected_features": 150,

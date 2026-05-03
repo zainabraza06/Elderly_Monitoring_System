@@ -4,6 +4,7 @@ import 'package:latlong2/latlong.dart';
 
 import 'models.dart';
 import 'monitoring_controller.dart';
+import 'role_launcher.dart';
 
 class ElderlyMonitorApp extends StatefulWidget {
   const ElderlyMonitorApp({super.key, this.controller});
@@ -39,7 +40,7 @@ class _ElderlyMonitorAppState extends State<ElderlyMonitorApp> {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'Care Monitor',
+      title: 'SisFall Care Monitor',
       theme: ThemeData(
         useMaterial3: true,
         scaffoldBackgroundColor: const Color(0xFFF5F7FA),
@@ -54,10 +55,102 @@ class _ElderlyMonitorAppState extends State<ElderlyMonitorApp> {
           if (snapshot.connectionState != ConnectionState.done) {
             return const Scaffold(body: Center(child: CircularProgressIndicator()));
           }
-          return MonitoringShell(controller: _controller);
+          return RoleLauncher(
+            controller: _controller,
+            caregiverShell: MonitoringShell(controller: _controller),
+            patientHomeBuilder: (c) => FallAwarePatientHome(controller: c),
+          );
         },
       ),
     );
+  }
+}
+
+/// Wraps [PatientModeHome] with fall confirmation dialog + optional escalation alarm.
+class FallAwarePatientHome extends StatefulWidget {
+  const FallAwarePatientHome({super.key, required this.controller});
+
+  final MonitoringController controller;
+
+  @override
+  State<FallAwarePatientHome> createState() => _FallAwarePatientHomeState();
+}
+
+class _FallAwarePatientHomeState extends State<FallAwarePatientHome> {
+  String? _lastShownKey;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: widget.controller,
+      builder: (context, _) {
+        final m = widget.controller.lastMotionInference;
+        if (m != null && m.isFall) {
+          final key =
+              '${m.fallProbability.toStringAsFixed(3)}_${m.fallTypeCode}_${widget.controller.lastTransmissionAt?.millisecondsSinceEpoch ?? 0}';
+          if (key != _lastShownKey) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (!mounted) return;
+              setState(() => _lastShownKey = key);
+              _showFallDialog(context, widget.controller, m, key);
+            });
+          }
+        }
+        return PatientModeHome(controller: widget.controller);
+      },
+    );
+  }
+
+  void _showFallDialog(
+    BuildContext context,
+    MonitoringController controller,
+    MotionInferenceResponseModel m,
+    String key,
+  ) {
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) {
+        return AlertDialog(
+          title: const Text('Fall detected'),
+          content: SingleChildScrollView(child: Text(m.summaryLine)),
+          actions: [
+            TextButton(onPressed: () => _submit(ctx, controller, m, 'false_alarm'), child: const Text('No fall')),
+            TextButton(onPressed: () => _submit(ctx, controller, m, 'okay'), child: const Text('I am okay')),
+            TextButton(onPressed: () => _submit(ctx, controller, m, 'need_help'), child: const Text('Need help')),
+            TextButton(onPressed: () => _submit(ctx, controller, m, 'wrong_fall_type'), child: const Text('Wrong type')),
+            TextButton(onPressed: () => _submit(ctx, controller, m, 'correct_fall_type'), child: const Text('Correct type')),
+            TextButton(onPressed: () => _submit(ctx, controller, m, 'no_help_needed'), child: const Text('No help needed')),
+          ],
+        );
+      },
+    );
+
+    Future<void>.delayed(const Duration(seconds: 30), () async {
+      if (!context.mounted) return;
+      if (_lastShownKey != key) return;
+      await controller.playEscalationFallAlarm();
+    });
+  }
+
+  Future<void> _submit(
+    BuildContext ctx,
+    MonitoringController controller,
+    MotionInferenceResponseModel m,
+    String response,
+  ) async {
+    Navigator.of(ctx).pop();
+    final pid = controller.patientId ?? '';
+    try {
+      await controller.apiClient.submitFallFeedback({
+        'patient_id': pid,
+        'response': response,
+        'fall_detected': true,
+        'predicted_fall_type_code': m.fallTypeCode,
+        'fall_probability': m.fallProbability,
+      });
+    } catch (_) {}
+    setState(() => _lastShownKey = null);
   }
 }
 

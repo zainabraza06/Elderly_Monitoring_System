@@ -1,21 +1,20 @@
-"""FastAPI: fall / ADL / fall-type inference."""
+"""FastAPI: SisFall / elderly monitoring — full REST + ML inference."""
 
 from __future__ import annotations
 
-import json
 import os
 import time
 from contextlib import asynccontextmanager
 
 import sklearn
 import xgboost
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
-from flask_backend.app.schemas_fall_feedback import FallFeedbackAck, FallFeedbackEvent
-from flask_backend.app.schemas_motion import MotionInferenceRequest, MotionInferenceResponse
-from flask_backend.app.services.motion_xgb_service import InferenceArtifacts, load_artifacts, run_inference
-from flask_backend.app.settings import inference_manifest_path, model_root, repo_root
+from flask_backend.app.database import init_schema, seed_default_admin
+from flask_backend.app.monitoring_routes import router as monitoring_router, set_inference_runtime
+from flask_backend.app.services.motion_xgb_service import InferenceArtifacts, load_artifacts
+from flask_backend.app.settings import inference_manifest_path, model_root
 
 
 def _versions() -> dict[str, str]:
@@ -33,16 +32,20 @@ _state: dict[str, InferenceArtifacts | str | None] = {"art": None, "load_error":
 async def lifespan(_app: FastAPI):
     os.environ.setdefault("OMP_NUM_THREADS", "1")
     os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+    init_schema()
+    seed_default_admin()
     try:
         _state["art"] = load_artifacts(inference_manifest_path(), model_root())
         _state["load_error"] = None
     except Exception as exc:
         _state["art"] = None
         _state["load_error"] = str(exc)
+    set_inference_runtime(_state)
     yield
 
 
-app = FastAPI(title="Motion inference", version="1.2.0", lifespan=lifespan)
+app = FastAPI(title="SisFall Elder Monitoring", version="2.0.0", lifespan=lifespan)
+app.include_router(monitoring_router)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -67,6 +70,7 @@ def health():
         "inference_ready": _state.get("art") is not None,
         "load_error": _state.get("load_error"),
         "versions": _versions(),
+        "product": "SisFall_dataset_monitoring",
     }
 
 
@@ -74,6 +78,8 @@ def health():
 def inference_status():
     art = _state.get("art")
     if art is None:
+        from fastapi import HTTPException
+
         raise HTTPException(503, detail=_state.get("load_error", "not loaded"))
     return {
         "loaded": True,
@@ -83,36 +89,3 @@ def inference_status():
         "fall_threshold": art.fall_threshold,
         "model_root": str(model_root()),
     }
-
-
-@app.post("/api/v1/inference/motion", response_model=MotionInferenceResponse)
-def inference_motion(body: MotionInferenceRequest):
-    art = _state.get("art")
-    if art is None:
-        raise HTTPException(503, detail=f"Inference not loaded: {_state.get('load_error')}")
-    try:
-        raw = run_inference(
-            art,
-            body.enhanced_features,
-            body.fall_type_features,
-            predict_fall_type=body.predict_fall_type,
-            acc_window=body.acc_window,
-            gyro_window=body.gyro_window,
-            ori_window=body.ori_window,
-        )
-        return MotionInferenceResponse(**raw)
-    except ValueError as e:
-        raise HTTPException(422, detail=str(e)) from e
-
-
-@app.post("/api/v1/events/fall-feedback", response_model=FallFeedbackAck)
-def fall_feedback(body: FallFeedbackEvent):
-    """Append elder/caretaker fall confirmation to JSONL for QA and future model tuning."""
-    log_dir = repo_root() / "data" / "feedback"
-    log_dir.mkdir(parents=True, exist_ok=True)
-    path = log_dir / "fall_events.jsonl"
-    row = body.model_dump()
-    row["_server_logged_at"] = FallFeedbackAck().logged_at
-    with path.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(row, ensure_ascii=False) + "\n")
-    return FallFeedbackAck()

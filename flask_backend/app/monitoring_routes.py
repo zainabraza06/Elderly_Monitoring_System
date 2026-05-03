@@ -1,0 +1,916 @@
+"""Full REST API expected by the Flutter app + admin/elder auth + ingest + escalation."""
+
+from __future__ import annotations
+
+import json
+import os
+import secrets
+import uuid
+
+import numpy as np
+from datetime import datetime, timedelta, timezone
+from typing import Annotated, Any
+
+from fastapi import APIRouter, Depends, Header, HTTPException
+from pydantic import BaseModel, Field
+
+from flask_backend.app.auth_jwt import create_token, decode_token, hash_password, verify_password
+from flask_backend.app.database import get_connection, init_schema, iso_now, seed_default_admin
+from flask_backend.app.detector_state import build_detection_payload
+from flask_backend.app.ml_bridge import acc_gyro_to_window_lists, samples_to_feature_vector
+from flask_backend.app.schemas_fall_feedback import FallFeedbackAck, FallFeedbackEvent
+from flask_backend.app.schemas_motion import MotionInferenceRequest, MotionInferenceResponse
+from flask_backend.app.services.motion_xgb_service import InferenceArtifacts, run_inference
+
+MAX_ELDERS_PER_CAREGIVER = 2
+RESPONSE_DEADLINE_SEC = int(os.environ.get("FALL_RESPONSE_DEADLINE_SEC", "30"))
+EMERGENCY_DEADLINE_SEC = int(os.environ.get("FALL_EMERGENCY_DEADLINE_SEC", "90"))
+
+DETECTOR_CFG = {
+    "medium_risk_score": 0.35,
+    "high_risk_score": 0.58,
+    "fall_score": 0.80,
+}
+
+router = APIRouter()
+
+# Set by ``main.py`` lifespan — avoids circular imports.
+_RUNTIME: dict[str, Any] = {}
+
+
+def set_inference_runtime(state: dict[str, Any]) -> None:
+    global _RUNTIME
+    _RUNTIME = state
+
+
+def _get_art() -> InferenceArtifacts | None:
+    return _RUNTIME.get("art")
+
+
+def _claims_opt(authorization: str | None) -> dict[str, Any] | None:
+    if not authorization or not authorization.startswith("Bearer "):
+        return None
+    raw = authorization.split(" ", 1)[1].strip()
+    try:
+        return decode_token(raw)
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+
+def _need_role(claims: dict[str, Any] | None, roles: set[str]) -> dict[str, Any]:
+    if claims is None:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    if claims.get("role") not in roles:
+        raise HTTPException(status_code=403, detail="Insufficient role")
+    return claims
+
+
+# --- Schemas ---
+
+
+class CaregiverSignupBody(BaseModel):
+    full_name: str
+    email: str
+    password: str
+
+
+class CaregiverLoginBody(BaseModel):
+    email: str
+    password: str
+
+
+class ElderLoginBody(BaseModel):
+    username: str
+    password: str
+
+
+class AdminLoginBody(BaseModel):
+    email: str
+    password: str
+
+
+class PatientCreateBody(BaseModel):
+    full_name: str
+    age: int | None = None
+
+
+class DeviceCreateBody(BaseModel):
+    label: str
+    platform: str = "flutter_mobile"
+    owner_name: str | None = None
+    patient_id: str | None = None
+
+
+class SessionCreateBody(BaseModel):
+    patient_id: str
+    device_id: str
+    sample_rate_hz: float = 50.0
+    started_by: str = "flutter_app"
+
+
+class SessionStopBody(BaseModel):
+    stopped_by: str = "flutter_app"
+    note: str | None = None
+
+
+class SamplePayload(BaseModel):
+    timestamp_ms: int
+    acc_x: float
+    acc_y: float
+    acc_z: float
+    gyro_x: float
+    gyro_y: float
+    gyro_z: float
+
+
+class IngestLiveBody(BaseModel):
+    patient_id: str
+    device_id: str
+    session_id: str
+    source: str = "flutter_mobile"
+    sampling_rate_hz: float = 50.0
+    acceleration_unit: str = "m_s2"
+    gyroscope_unit: str = "rad_s"
+    battery_level: float | None = None
+    samples: list[SamplePayload]
+
+
+class ManualAlertBody(BaseModel):
+    patient_id: str
+    device_id: str | None = None
+    session_id: str | None = None
+    severity: str = "fall_detected"
+    message: str = "Emergency alert triggered from mobile app."
+    actor: str = "flutter_app"
+
+
+class AckBody(BaseModel):
+    actor: str = "caregiver_app"
+    note: str | None = None
+
+
+class DetectorConfigBody(BaseModel):
+    medium_risk_score: float
+    high_risk_score: float
+    fall_score: float
+
+
+class PatientCredBody(BaseModel):
+    caregiver_token: str
+    full_name: str
+    age: int | None = None
+    home_address: str = ""
+    emergency_contact: str | None = None
+    notes: str | None = None
+
+
+def count_caregiver_assignments(conn, caregiver_id: str) -> int:
+    c = conn.cursor()
+    c.execute("SELECT COUNT(*) FROM caregiver_patient WHERE caregiver_id = ?", (caregiver_id,))
+    return int(c.fetchone()[0])
+
+
+def tick_fall_escalations(conn) -> None:
+    now = datetime.now(timezone.utc)
+    c = conn.cursor()
+    c.execute(
+        "SELECT * FROM fall_incidents WHERE stage IN ('awaiting_response','alarm_local')",
+    )
+    rows = c.fetchall()
+    for row in rows:
+        rid = row["id"]
+        pid = row["patient_id"]
+        stage = row["stage"]
+        resp_dead = row["response_deadline_at"]
+        alarm_dead = row["alarm_deadline_at"]
+        try:
+            rdt = datetime.fromisoformat(resp_dead.replace("Z", "+00:00")) if resp_dead else None
+            adt = datetime.fromisoformat(alarm_dead.replace("Z", "+00:00")) if alarm_dead else None
+        except ValueError:
+            continue
+        if stage == "awaiting_response" and rdt and now > rdt:
+            c.execute(
+                "UPDATE fall_incidents SET stage = ? WHERE id = ?",
+                ("alarm_local", rid),
+            )
+            aid = uuid.uuid4().hex
+            c.execute(
+                """INSERT INTO alerts (id, patient_id, device_id, session_id, severity, status, message, score, created_at, manually_triggered)
+                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    aid,
+                    pid,
+                    None,
+                    row["session_id"],
+                    "high_risk",
+                    "open",
+                    "Fall detected — no elder response within deadline (local alarm phase).",
+                    0.92,
+                    iso_now(),
+                    0,
+                ),
+            )
+        elif stage == "alarm_local" and adt and now > adt:
+            c.execute(
+                "UPDATE fall_incidents SET stage = ? WHERE id = ?",
+                ("emergency", rid),
+            )
+            aid = uuid.uuid4().hex
+            c.execute(
+                """INSERT INTO alerts (id, patient_id, device_id, session_id, severity, status, message, score, created_at, manually_triggered)
+                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    aid,
+                    pid,
+                    None,
+                    row["session_id"],
+                    "fall_detected",
+                    "open",
+                    "EMERGENCY: elder did not confirm after alarm — escalate to caretaker.",
+                    1.0,
+                    iso_now(),
+                    0,
+                ),
+            )
+
+
+def _persist_feedback_db(body: FallFeedbackEvent) -> None:
+    with get_connection() as conn:
+        c = conn.cursor()
+        eid = uuid.uuid4().hex
+        c.execute(
+            "INSERT INTO app_events (id, event_type, payload_json, created_at) VALUES (?,?,?,?)",
+            (eid, "fall_feedback", json.dumps(body.model_dump()), iso_now()),
+        )
+
+
+@router.post("/api/v1/auth/caregiver/signup")
+def caregiver_signup(body: CaregiverSignupBody):
+    init_schema()
+    seed_default_admin()
+    uid = uuid.uuid4().hex
+    with get_connection() as conn:
+        c = conn.cursor()
+        c.execute("SELECT id FROM users WHERE email = ?", (body.email.strip().lower(),))
+        if c.fetchone():
+            raise HTTPException(status_code=400, detail="Email already registered")
+        c.execute(
+            """INSERT INTO users (id, email, username, password_hash, role, full_name, created_at)
+               VALUES (?,?,?,?,?,?,?)""",
+            (
+                uid,
+                body.email.strip().lower(),
+                None,
+                hash_password(body.password),
+                "caregiver",
+                body.full_name.strip(),
+                iso_now(),
+            ),
+        )
+    token = create_token(user_id=uid, role="caregiver", email=body.email.strip().lower())
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "caregiver": {"id": uid, "full_name": body.full_name.strip(), "email": body.email.strip().lower()},
+    }
+
+
+@router.post("/api/v1/auth/caregiver/login")
+def caregiver_login(body: CaregiverLoginBody):
+    init_schema()
+    seed_default_admin()
+    em = body.email.strip().lower()
+    with get_connection() as conn:
+        c = conn.cursor()
+        c.execute("SELECT * FROM users WHERE email = ? AND role = 'caregiver'", (em,))
+        row = c.fetchone()
+        if not row or not verify_password(body.password, row["password_hash"]):
+            raise HTTPException(status_code=401, detail="Invalid credentials")
+        uid = row["id"]
+        token = create_token(user_id=uid, role="caregiver", email=em)
+        return {
+            "access_token": token,
+            "token_type": "bearer",
+            "caregiver": {"id": uid, "full_name": row["full_name"], "email": em},
+        }
+
+
+@router.post("/api/v1/auth/admin/login")
+def admin_login(body: AdminLoginBody):
+    init_schema()
+    seed_default_admin()
+    em = body.email.strip().lower()
+    with get_connection() as conn:
+        c = conn.cursor()
+        c.execute("SELECT * FROM users WHERE email = ? AND role = 'admin'", (em,))
+        row = c.fetchone()
+        if not row or not verify_password(body.password, row["password_hash"]):
+            raise HTTPException(status_code=401, detail="Invalid credentials")
+        token = create_token(user_id=row["id"], role="admin", email=em)
+        return {"access_token": token, "token_type": "bearer", "role": "admin", "email": em}
+
+
+@router.post("/api/v1/auth/elder/login")
+def elder_login(body: ElderLoginBody):
+    init_schema()
+    un = body.username.strip()
+    with get_connection() as conn:
+        c = conn.cursor()
+        c.execute("SELECT * FROM users WHERE username = ? AND role = 'elder'", (un,))
+        row = c.fetchone()
+        if not row or not verify_password(body.password, row["password_hash"]):
+            raise HTTPException(status_code=401, detail="Invalid credentials")
+        c.execute("SELECT id FROM patients WHERE elder_user_id = ?", (row["id"],))
+        prow = c.fetchone()
+        pid = prow["id"] if prow else ""
+        token = create_token(user_id=row["id"], role="elder", email=row["email"] or un)
+        return {
+            "access_token": token,
+            "token_type": "bearer",
+            "role": "elder",
+            "user_id": row["id"],
+            "patient_id": pid,
+            "display_name": row["full_name"] or un,
+        }
+
+
+@router.post("/api/v1/auth/caregiver/patient-credentials")
+def patient_credentials(body: PatientCredBody):
+    init_schema()
+    try:
+        claims = decode_token(body.caregiver_token.strip())
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid caregiver token")
+    if claims.get("role") != "caregiver":
+        raise HTTPException(status_code=403, detail="Caregiver token required")
+    caregiver_id = claims["sub"]
+
+    with get_connection() as conn:
+        tick_fall_escalations(conn)
+        if count_caregiver_assignments(conn, caregiver_id) >= MAX_ELDERS_PER_CAREGIVER:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Maximum {MAX_ELDERS_PER_CAREGIVER} elders per caretaker reached.",
+            )
+        pid = uuid.uuid4().hex
+        eid = uuid.uuid4().hex
+        username = f"elder_{pid[:8]}"
+        temp_pass = secrets.token_urlsafe(10)
+        c = conn.cursor()
+        c.execute(
+            """INSERT INTO patients (id, full_name, age, caregiver_id, home_address, emergency_contact, notes)
+               VALUES (?,?,?,?,?,?,?)""",
+            (
+                pid,
+                body.full_name.strip(),
+                body.age,
+                caregiver_id,
+                body.home_address.strip(),
+                body.emergency_contact or "",
+                body.notes or "",
+            ),
+        )
+        c.execute(
+            """INSERT INTO users (id, email, username, password_hash, role, full_name, created_at)
+               VALUES (?,?,?,?,?,?,?)""",
+            (
+                eid,
+                f"{username}@patients.local",
+                username,
+                hash_password(temp_pass),
+                "elder",
+                body.full_name.strip(),
+                iso_now(),
+            ),
+        )
+        c.execute("UPDATE patients SET elder_user_id = ? WHERE id = ?", (eid, pid))
+        c.execute(
+            "INSERT INTO caregiver_patient (caregiver_id, patient_id) VALUES (?,?)",
+            (caregiver_id, pid),
+        )
+
+    return {
+        "patient_id": pid,
+        "patient_name": body.full_name.strip(),
+        "home_address": body.home_address.strip(),
+        "username": username,
+        "temporary_password": temp_pass,
+    }
+
+
+@router.post("/api/v1/patients")
+def create_patient(body: PatientCreateBody, authorization: Annotated[str | None, Header()] = None):
+    init_schema()
+    claims = _claims_opt(authorization)
+    caregiver_id = claims["sub"] if claims and claims.get("role") == "caregiver" else None
+    pid = uuid.uuid4().hex
+    with get_connection() as conn:
+        c = conn.cursor()
+        c.execute(
+            "INSERT INTO patients (id, full_name, age, caregiver_id) VALUES (?,?,?,?)",
+            (pid, body.full_name.strip(), body.age, caregiver_id),
+        )
+    return {"id": pid, "full_name": body.full_name.strip(), "age": body.age}
+
+
+@router.get("/api/v1/patients/{patient_id}")
+def get_patient(patient_id: str):
+    init_schema()
+    with get_connection() as conn:
+        c = conn.cursor()
+        c.execute("SELECT * FROM patients WHERE id = ?", (patient_id,))
+        row = c.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Patient not found")
+        return {"id": row["id"], "full_name": row["full_name"], "age": row["age"]}
+
+
+@router.post("/api/v1/devices")
+def create_device(body: DeviceCreateBody):
+    init_schema()
+    if not body.patient_id or not body.patient_id.strip():
+        raise HTTPException(status_code=422, detail="patient_id is required (create patient first)")
+    did = _create_device_for_patient(body.patient_id.strip(), body.label, body.platform)
+    return {"id": did, "label": body.label, "platform": body.platform}
+
+
+@router.get("/api/v1/devices/{device_id}")
+def get_device(device_id: str):
+    init_schema()
+    with get_connection() as conn:
+        c = conn.cursor()
+        c.execute("SELECT * FROM devices WHERE id = ?", (device_id,))
+        row = c.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="device not found")
+        return {"id": row["id"], "label": row["label"], "platform": row["platform"]}
+
+
+def _create_device_for_patient(patient_id: str, label: str, platform: str) -> str:
+    did = uuid.uuid4().hex
+    with get_connection() as conn:
+        c = conn.cursor()
+        c.execute(
+            "INSERT INTO devices (id, patient_id, label, platform) VALUES (?,?,?,?)",
+            (did, patient_id, label, platform),
+        )
+    return did
+
+
+@router.post("/api/v1/sessions")
+def start_session(body: SessionCreateBody):
+    init_schema()
+    sid = uuid.uuid4().hex
+    with get_connection() as conn:
+        c = conn.cursor()
+        c.execute("SELECT id FROM patients WHERE id = ?", (body.patient_id,))
+        if not c.fetchone():
+            raise HTTPException(status_code=404, detail="patient not found")
+        c.execute(
+            """INSERT INTO sessions (id, patient_id, device_id, status, sample_rate_hz, started_at)
+               VALUES (?,?,?,?,?,?)""",
+            (sid, body.patient_id, body.device_id, "active", body.sample_rate_hz, iso_now()),
+        )
+    return {
+        "id": sid,
+        "patient_id": body.patient_id,
+        "device_id": body.device_id,
+        "status": "active",
+        "sample_rate_hz": body.sample_rate_hz,
+    }
+
+
+@router.post("/api/v1/sessions/{session_id}/stop")
+def stop_session(session_id: str, body: SessionStopBody):
+    init_schema()
+    with get_connection() as conn:
+        c = conn.cursor()
+        c.execute(
+            "UPDATE sessions SET status = ?, stopped_at = ? WHERE id = ?",
+            ("stopped", iso_now(), session_id),
+        )
+    return {"ok": True}
+
+
+@router.post("/api/v1/ingest/live")
+def ingest_live(body: IngestLiveBody):
+    init_schema()
+    art = _get_art()
+    thr = float(art.fall_threshold) if art is not None else 0.5
+
+    samples_dict = [s.model_dump() for s in body.samples]
+    feat_vec, acc300, gyro300 = samples_to_feature_vector(samples_dict)
+    acc_w, gyro_w = acc_gyro_to_window_lists(acc300, gyro300)
+
+    inferred_activity: str | None = None
+    ml_ok = False
+    p_fall = 0.0
+    branch = "unknown"
+
+    if art is not None:
+        raw = run_inference(
+            art,
+            feat_vec.tolist(),
+            None,
+            predict_fall_type=True,
+            acc_window=acc_w,
+            gyro_window=gyro_w,
+            ori_window=None,
+        )
+        p_fall = float(raw["fall_probability"])
+        branch = str(raw.get("branch", ""))
+        inferred_activity = raw.get("activity_label") if raw.get("branch") == "adl" else raw.get("fall_type_label")
+        ml_ok = True
+    else:
+        # heuristic-only when models missing
+        mags = []
+        for s in samples_dict:
+            ax, ay, az = s["acc_x"], s["acc_y"], s["acc_z"]
+            mags.append((ax * ax + ay * ay + az * az) ** 0.5)
+        p_fall = float(min(1.0, max(0.0, (np.max(mags) / 25.0) if mags else 0.0)))
+
+    detection = build_detection_payload(
+        samples=samples_dict,
+        fall_probability=p_fall,
+        inferred_activity=inferred_activity,
+        ml_ok=ml_ok,
+        threshold=thr,
+    )
+
+    active_alert = None
+    with get_connection() as conn:
+        tick_fall_escalations(conn)
+        c = conn.cursor()
+        c.execute("SELECT full_name FROM patients WHERE id = ?", (body.patient_id,))
+        prow = c.fetchone()
+        pname = prow["full_name"] if prow else "Unknown"
+
+        alert_ids: list[str] = []
+        if detection["severity"] == "fall_detected" and p_fall >= thr:
+            aid = uuid.uuid4().hex
+            c.execute(
+                """INSERT INTO alerts (id, patient_id, device_id, session_id, severity, status, message, score, created_at, manually_triggered)
+                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    aid,
+                    body.patient_id,
+                    body.device_id,
+                    body.session_id,
+                    "fall_detected",
+                    "open",
+                    detection["message"],
+                    float(detection["score"]),
+                    iso_now(),
+                    0,
+                ),
+            )
+            alert_ids.append(aid)
+            active_alert = {
+                "id": aid,
+                "patient_id": body.patient_id,
+                "severity": "fall_detected",
+                "status": "open",
+                "message": detection["message"],
+                "score": float(detection["score"]),
+                "created_at": iso_now(),
+                "manually_triggered": False,
+            }
+
+            c.execute(
+                "SELECT id FROM fall_incidents WHERE patient_id = ? AND stage IN ('awaiting_response','alarm_local')",
+                (body.patient_id,),
+            )
+            if not c.fetchone():
+                iid = uuid.uuid4().hex
+                now = datetime.now(timezone.utc)
+                c.execute(
+                    """INSERT INTO fall_incidents (id, patient_id, session_id, stage, created_at, response_deadline_at, alarm_deadline_at, fall_probability, metadata_json)
+                       VALUES (?,?,?,?,?,?,?,?,?)""",
+                    (
+                        iid,
+                        body.patient_id,
+                        body.session_id,
+                        "awaiting_response",
+                        iso_now(),
+                        (now + timedelta(seconds=RESPONSE_DEADLINE_SEC)).isoformat(),
+                        (now + timedelta(seconds=EMERGENCY_DEADLINE_SEC)).isoformat(),
+                        p_fall,
+                        json.dumps({"branch": branch, "ml_ok": ml_ok}),
+                    ),
+                )
+
+        c.execute("SELECT id FROM alerts WHERE patient_id = ? AND status = 'open'", (body.patient_id,))
+        alert_ids = [r[0] for r in c.fetchall()]
+
+        live = {
+            "patient_id": body.patient_id,
+            "patient_name": pname,
+            "session_id": body.session_id,
+            "device_id": body.device_id,
+            "severity": detection["severity"],
+            "score": float(detection["score"]),
+            "fall_probability": float(p_fall),
+            "predicted_activity_class": inferred_activity,
+            "last_message": detection["message"],
+            "sample_rate_hz": body.sampling_rate_hz,
+            "latest_metrics": {"branch": branch, "ml_ok": float(ml_ok)},
+            "active_alert_ids": alert_ids,
+        }
+        c.execute(
+            """INSERT INTO patient_live (patient_id, patient_name, session_id, device_id, severity, score, fall_probability, predicted_activity_class, last_message, sample_rate_hz, active_alert_ids, updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+               ON CONFLICT(patient_id) DO UPDATE SET
+               patient_name=excluded.patient_name, session_id=excluded.session_id, device_id=excluded.device_id,
+               severity=excluded.severity, score=excluded.score, fall_probability=excluded.fall_probability,
+               predicted_activity_class=excluded.predicted_activity_class, last_message=excluded.last_message,
+               sample_rate_hz=excluded.sample_rate_hz, active_alert_ids=excluded.active_alert_ids, updated_at=excluded.updated_at""",
+            (
+                body.patient_id,
+                pname,
+                body.session_id,
+                body.device_id,
+                live["severity"],
+                live["score"],
+                float(p_fall),
+                inferred_activity,
+                live["last_message"],
+                body.sampling_rate_hz,
+                json.dumps(alert_ids),
+                iso_now(),
+            ),
+        )
+
+    telemetry = {
+        "patient_id": body.patient_id,
+        "patient_name": pname,
+        "session_id": body.session_id,
+        "device_id": body.device_id,
+        "source": body.source,
+        "sampling_rate_hz": body.sampling_rate_hz,
+        "acceleration_unit": body.acceleration_unit,
+        "gyroscope_unit": body.gyroscope_unit,
+        "battery_level": body.battery_level,
+        "received_at": iso_now(),
+        "samples_in_last_batch": len(body.samples),
+        "latest_samples": samples_dict[-min(32, len(samples_dict)) :],
+    }
+
+    return {
+        "ingested_samples": len(body.samples),
+        "detection": detection,
+        "live_status": live,
+        "active_alert": active_alert,
+        "telemetry": telemetry,
+    }
+
+
+@router.post("/api/v1/alerts/manual")
+def manual_alert(body: ManualAlertBody):
+    init_schema()
+    aid = uuid.uuid4().hex
+    with get_connection() as conn:
+        c = conn.cursor()
+        c.execute(
+            """INSERT INTO alerts (id, patient_id, device_id, session_id, severity, status, message, score, created_at, manually_triggered)
+               VALUES (?,?,?,?,?,?,?,?,?,?)""",
+            (
+                aid,
+                body.patient_id,
+                body.device_id,
+                body.session_id,
+                body.severity,
+                "open",
+                body.message,
+                1.0,
+                iso_now(),
+                1,
+            ),
+        )
+    return {
+        "id": aid,
+        "patient_id": body.patient_id,
+        "severity": body.severity,
+        "status": "open",
+        "message": body.message,
+        "score": 1.0,
+        "created_at": iso_now(),
+        "manually_triggered": True,
+    }
+
+
+@router.get("/api/v1/alerts")
+def list_alerts(status: str | None = None, patient_id: str | None = None):
+    init_schema()
+    with get_connection() as conn:
+        tick_fall_escalations(conn)
+        c = conn.cursor()
+        q = "SELECT * FROM alerts WHERE 1=1"
+        args: list[Any] = []
+        if status:
+            q += " AND status = ?"
+            args.append(status)
+        if patient_id:
+            q += " AND patient_id = ?"
+            args.append(patient_id)
+        q += " ORDER BY created_at DESC LIMIT 200"
+        c.execute(q, args)
+        rows = c.fetchall()
+    out = []
+    for row in rows:
+        out.append(
+            {
+                "id": row["id"],
+                "patient_id": row["patient_id"],
+                "severity": row["severity"],
+                "status": row["status"],
+                "message": row["message"],
+                "score": row["score"],
+                "created_at": row["created_at"],
+                "acknowledged_at": row["acknowledged_at"],
+                "resolved_at": row["resolved_at"],
+                "manually_triggered": bool(row["manually_triggered"]),
+            }
+        )
+    return out
+
+
+@router.post("/api/v1/alerts/{alert_id}/acknowledge")
+def ack_alert(alert_id: str, body: AckBody):
+    init_schema()
+    with get_connection() as conn:
+        c = conn.cursor()
+        c.execute(
+            "UPDATE alerts SET status = ?, acknowledged_at = ? WHERE id = ?",
+            ("acknowledged", iso_now(), alert_id),
+        )
+        c.execute("SELECT * FROM alerts WHERE id = ?", (alert_id,))
+        row = c.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="alert not found")
+    return {
+        "id": row["id"],
+        "patient_id": row["patient_id"],
+        "severity": row["severity"],
+        "status": row["status"],
+        "message": row["message"],
+        "score": row["score"],
+        "created_at": row["created_at"],
+        "acknowledged_at": row["acknowledged_at"],
+        "resolved_at": row["resolved_at"],
+        "manually_triggered": bool(row["manually_triggered"]),
+    }
+
+
+@router.post("/api/v1/alerts/{alert_id}/resolve")
+def resolve_alert(alert_id: str, body: AckBody):
+    init_schema()
+    with get_connection() as conn:
+        c = conn.cursor()
+        c.execute(
+            "UPDATE alerts SET status = ?, resolved_at = ? WHERE id = ?",
+            ("resolved", iso_now(), alert_id),
+        )
+        c.execute("SELECT * FROM alerts WHERE id = ?", (alert_id,))
+        row = c.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="alert not found")
+    return {
+        "id": row["id"],
+        "patient_id": row["patient_id"],
+        "severity": row["severity"],
+        "status": row["status"],
+        "message": row["message"],
+        "score": row["score"],
+        "created_at": row["created_at"],
+        "acknowledged_at": row["acknowledged_at"],
+        "resolved_at": row["resolved_at"],
+        "manually_triggered": bool(row["manually_triggered"]),
+    }
+
+
+@router.get("/api/v1/summary")
+def summary():
+    init_schema()
+    with get_connection() as conn:
+        tick_fall_escalations(conn)
+        c = conn.cursor()
+        c.execute("SELECT COUNT(*) FROM patients")
+        tp = c.fetchone()[0]
+        c.execute("SELECT COUNT(*) FROM sessions WHERE status = 'active'")
+        ac = c.fetchone()[0]
+        c.execute("SELECT COUNT(*) FROM alerts WHERE status = 'open'")
+        oa = c.fetchone()[0]
+    return {
+        "total_patients": tp,
+        "active_sessions": ac,
+        "open_alerts": oa,
+        "last_event_at": iso_now(),
+    }
+
+
+@router.get("/api/v1/monitor/patients/live")
+def live_patients():
+    init_schema()
+    with get_connection() as conn:
+        tick_fall_escalations(conn)
+        c = conn.cursor()
+        c.execute("SELECT * FROM patient_live")
+        rows = c.fetchall()
+    out = []
+    for row in rows:
+        aids = []
+        raw = row["active_alert_ids"]
+        if raw:
+            try:
+                aids = json.loads(raw)
+            except json.JSONDecodeError:
+                aids = []
+        out.append(
+            {
+                "patient_id": row["patient_id"],
+                "patient_name": row["patient_name"],
+                "session_id": row["session_id"],
+                "device_id": row["device_id"],
+                "severity": row["severity"],
+                "score": row["score"],
+                "fall_probability": row["fall_probability"],
+                "predicted_activity_class": row["predicted_activity_class"],
+                "last_message": row["last_message"],
+                "sample_rate_hz": row["sample_rate_hz"],
+                "latest_metrics": {},
+                "active_alert_ids": aids,
+            }
+        )
+    return out
+
+
+@router.put("/api/v1/detector/config")
+def detector_config(body: DetectorConfigBody):
+    DETECTOR_CFG["medium_risk_score"] = body.medium_risk_score
+    DETECTOR_CFG["high_risk_score"] = body.high_risk_score
+    DETECTOR_CFG["fall_score"] = body.fall_score
+    return {"ok": True, "config": DETECTOR_CFG}
+
+
+@router.get("/api/v1/admin/dashboard")
+def admin_dashboard(authorization: Annotated[str | None, Header()] = None):
+    _need_role(_claims_opt(authorization), {"admin"})
+    init_schema()
+    with get_connection() as conn:
+        c = conn.cursor()
+        c.execute("SELECT COUNT(*) FROM users WHERE role='caregiver'")
+        nc = c.fetchone()[0]
+        c.execute("SELECT COUNT(*) FROM users WHERE role='elder'")
+        ne = c.fetchone()[0]
+        c.execute("SELECT COUNT(*) FROM patients")
+        np = c.fetchone()[0]
+        c.execute("SELECT COUNT(*) FROM alerts WHERE status='open'")
+        oa = c.fetchone()[0]
+        c.execute("SELECT COUNT(*) FROM app_events WHERE event_type='fall_feedback'")
+        nf = c.fetchone()[0]
+    return {
+        "schema": "sisfall_monitoring_v1",
+        "caretakers": nc,
+        "elders_registered": ne,
+        "patients": np,
+        "open_alerts": oa,
+        "fall_feedback_events": nf,
+        "datasets": ["SisFall", "MobiAct"],
+        "note": "Train scripts under scripts/; SisFall loader: scripts/sisfall/",
+    }
+
+
+@router.post("/api/v1/events/fall-feedback")
+def fall_feedback_db(body: FallFeedbackEvent):
+    from flask_backend.app.settings import repo_root as _repo_root
+
+    _persist_feedback_db(body)
+    log_dir = _repo_root() / "data" / "feedback"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    path = log_dir / "fall_events.jsonl"
+    row = body.model_dump()
+    row["_server_logged_at"] = FallFeedbackAck().logged_at
+    with path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(row, ensure_ascii=False) + "\n")
+    return FallFeedbackAck()
+
+
+@router.post("/api/v1/inference/motion", response_model=MotionInferenceResponse)
+def inference_motion(body: MotionInferenceRequest):
+    art = _get_art()
+    if art is None:
+        err = _RUNTIME.get("load_error", "not loaded")
+        raise HTTPException(503, detail=f"Inference not loaded: {err}")
+    try:
+        raw = run_inference(
+            art,
+            body.enhanced_features,
+            body.fall_type_features,
+            predict_fall_type=body.predict_fall_type,
+            acc_window=body.acc_window,
+            gyro_window=body.gyro_window,
+            ori_window=body.ori_window,
+        )
+        return MotionInferenceResponse(**raw)
+    except ValueError as e:
+        raise HTTPException(422, detail=str(e)) from e

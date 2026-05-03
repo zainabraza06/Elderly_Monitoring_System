@@ -51,6 +51,9 @@ class MonitoringController extends ChangeNotifier {
   final BackendApiClient _apiClient;
   final SensorStreamingService _sensorService;
 
+  /// For elder login / admin tools that need direct HTTP access.
+  BackendApiClient get apiClient => _apiClient;
+
   SharedPreferences? _preferences;
 
   bool _initialized = false;
@@ -184,6 +187,7 @@ class MonitoringController extends ChangeNotifier {
     _sessionId = null;
 
     _apiClient.updateBaseUrl(_backendUrl);
+    _apiClient.setBearerToken(_caregiverToken);
 
     _statusMessage = hasSetup
         ? 'Saved setup loaded. Check the backend and start monitoring.'
@@ -214,6 +218,7 @@ class MonitoringController extends ChangeNotifier {
       _caregiverName = auth.caregiverName;
       _caregiverAuthEmail = auth.caregiverEmail;
       await _persistCaregiverAuth();
+      _apiClient.setBearerToken(_caregiverToken);
       _statusMessage = 'Caregiver account ready.';
     } catch (error) {
       _lastError = _formatError(error);
@@ -240,6 +245,7 @@ class MonitoringController extends ChangeNotifier {
       _caregiverName = auth.caregiverName;
       _caregiverAuthEmail = auth.caregiverEmail;
       await _persistCaregiverAuth();
+      _apiClient.setBearerToken(_caregiverToken);
       _statusMessage = 'Welcome back $_caregiverName.';
     } catch (error) {
       _lastError = _formatError(error);
@@ -250,10 +256,27 @@ class MonitoringController extends ChangeNotifier {
     }
   }
 
+  /// After elder signs in with generated username/password from caregiver enrollment.
+  Future<void> applyElderSession({
+    required String accessToken,
+    required String patientId,
+    String? displayName,
+  }) async {
+    _caregiverToken = null;
+    _apiClient.setBearerToken(accessToken);
+    _patientId = patientId;
+    if (displayName != null && displayName.isNotEmpty) {
+      _patientName = displayName;
+    }
+    await _persistIdentifiers();
+    notifyListeners();
+  }
+
   Future<void> caregiverLogout() async {
     _caregiverToken = null;
     _caregiverName = '';
     _caregiverAuthEmail = '';
+    _apiClient.setBearerToken(null);
     _lastGeneratedCredential = null;
     final preferences = _preferences ?? await SharedPreferences.getInstance();
     _preferences = preferences;
@@ -957,6 +980,7 @@ class MonitoringController extends ChangeNotifier {
     }
 
     final device = await _apiClient.createDevice(
+      patientId: _patientId!,
       label: _deviceLabel,
       ownerName: _patientName,
     );
@@ -1077,6 +1101,15 @@ class MonitoringController extends ChangeNotifier {
     }
     FlutterRingtonePlayer().stop();
     _alarmPlaying = false;
+  }
+
+  /// Loud alarm if elder does not dismiss fall dialog (escalation ladder).
+  Future<void> playEscalationFallAlarm() async {
+    if (!_alarmPlaying) {
+      FlutterRingtonePlayer().playAlarm(looping: true, volume: 1.0, asAlarm: true);
+      _alarmPlaying = true;
+      notifyListeners();
+    }
   }
 
   Future<void> triggerTestAlarm() async {
