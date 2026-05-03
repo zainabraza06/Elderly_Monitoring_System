@@ -120,6 +120,11 @@ def run_inference(
     if x.shape[1] != art.enhanced_dim:
         raise ValueError(f"enhanced_features length {x.shape[1]} != {art.enhanced_dim}")
 
+    if fall_type_features is not None:
+        ft_chk = np.asarray(fall_type_features, dtype=np.float64).reshape(1, -1)
+        if ft_chk.shape[1] != art.fall_type_dim:
+            raise ValueError(f"fall_type_features length {ft_chk.shape[1]} != {art.fall_type_dim}")
+
     xf = art.fall_scaler.transform(x)
     p_fall = float(art.fall_model.predict_proba(xf)[0, 1])
     is_fall = p_fall >= art.fall_threshold

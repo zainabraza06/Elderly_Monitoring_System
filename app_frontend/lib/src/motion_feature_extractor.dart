@@ -32,13 +32,13 @@ class MotionFeatureExtractor {
     final gy = n == windowLength ? gY : _resampleSeries(gY, windowLength);
     final gz = n == windowLength ? gZ : _resampleSeries(gZ, windowLength);
 
-    // Orientation unknown on phone — zeros (same as missing ori in CSV).
-    final oz = List<double>.filled(windowLength, 0.0);
-    final ori = <List<double>>[
-      List<double>.from(oz),
-      List<double>.from(oz),
-      List<double>.from(oz),
-    ];
+    final oa = List<double>.generate(n, (i) => samples[i].azimuth ?? 0.0);
+    final ob = List<double>.generate(n, (i) => samples[i].pitch ?? 0.0);
+    final oc = List<double>.generate(n, (i) => samples[i].roll ?? 0.0);
+    final ox = n == windowLength ? oa : _resampleSeries(oa, windowLength);
+    final oy = n == windowLength ? ob : _resampleSeries(ob, windowLength);
+    final oz = n == windowLength ? oc : _resampleSeries(oc, windowLength);
+    final ori = <List<double>>[ox, oy, oz];
 
     final acc = <List<double>>[ax, ay, az];
     final gyro = <List<double>>[gx, gy, gz];
@@ -94,11 +94,18 @@ class MotionFeatureExtractor {
   static List<List<double>> gyroMatrix300(List<SensorReadingPayload> samples) =>
       _sensorMatrix300(samples, _gyroTriplets);
 
+  /// Orientation columns (degrees, MobiAct azimuth / pitch / roll) for fall-type server features.
+  static List<List<double>> oriMatrix300(List<SensorReadingPayload> samples) =>
+      _sensorMatrix300(samples, _oriTriplets);
+
   static List<double> _accTriplets(SensorReadingPayload s) =>
       <double>[s.accX, s.accY, s.accZ];
 
   static List<double> _gyroTriplets(SensorReadingPayload s) =>
       <double>[s.gyroX, s.gyroY, s.gyroZ];
+
+  static List<double> _oriTriplets(SensorReadingPayload s) =>
+      <double>[s.azimuth ?? 0.0, s.pitch ?? 0.0, s.roll ?? 0.0];
 
   static List<List<double>> _sensorMatrix300(
     List<SensorReadingPayload> samples,

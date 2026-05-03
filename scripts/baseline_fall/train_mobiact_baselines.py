@@ -7,7 +7,7 @@ Fall detection is delegated to `fall_detection_core.train_fall_binary_pipeline` 
 For multi-model fall detection + plots, run:
   scripts/baseline_fall/train_fall_detection_mobiact.py
 
-For Colab-style multi-model ADL (LightGBM, comparison plots, `adl_classifier.pkl`), use:
+For Colab-style multi-model ADL (LightGBM, comparison plots, `best_adl_model.pkl`), use:
   scripts/baseline_adl/train_mobiact_adl.py
 
 This combined script writes XGBoost-only fall artifacts plus ADL XGBoost as before.
@@ -129,7 +129,6 @@ def main() -> int:
     adl_dir = args.models_dir / "baseline_adl"
     adl_dir.mkdir(parents=True, exist_ok=True)
     joblib.dump(xgb_adl, adl_dir / "adl_classification_xgboost.pkl")
-    joblib.dump(xgb_adl, adl_dir / "adl_classifier.pkl")
     joblib.dump(scaler_adl, adl_dir / "scaler_adl.pkl")
     joblib.dump(le, adl_dir / "adl_label_encoder.pkl")
     (adl_dir / "adl_metrics.json").write_text(

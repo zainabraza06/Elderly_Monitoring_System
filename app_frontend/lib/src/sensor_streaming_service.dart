@@ -1,11 +1,35 @@
 import 'dart:async';
+import 'dart:math' as math;
 
+import 'package:motion_core/motion_core.dart';
 import 'package:sensors_plus/sensors_plus.dart';
 
 import 'models.dart';
 
 typedef SensorBatchCallback =
     Future<void> Function(List<SensorReadingPayload> samples);
+
+/// Convert fused quaternion attitude to MobiAct CSV orientation (degrees).
+/// MobiAct `ori`: Azimuth(Z), Pitch(X), Roll(Y). [MotionDataEuler]: yaw(Z), pitch(Y), roll(X) in radians.
+({double azimuthDeg, double pitchDeg, double rollDeg}) mobiActOrientationFromMotion(
+  MotionData m,
+) {
+  final yaw = m.yaw;
+  final pitchY = m.pitch;
+  final rollX = m.roll;
+  final radToDeg = 180.0 / math.pi;
+  return (
+    azimuthDeg: _normalizeAzimuthDeg(yaw * radToDeg),
+    pitchDeg: rollX * radToDeg,
+    rollDeg: pitchY * radToDeg,
+  );
+}
+
+double _normalizeAzimuthDeg(double d) {
+  var x = d % 360.0;
+  if (x < 0) x += 360.0;
+  return x;
+}
 
 class SensorStreamingService {
   SensorStreamingService({
@@ -22,10 +46,15 @@ class SensorStreamingService {
 
   StreamSubscription<AccelerometerEvent>? _accelerometerSubscription;
   StreamSubscription<GyroscopeEvent>? _gyroscopeSubscription;
+  StreamSubscription<MotionData>? _motionSubscription;
 
   double _latestGyroX = 0.0;
   double _latestGyroY = 0.0;
   double _latestGyroZ = 0.0;
+  double? _latestAzimuthDeg;
+  double? _latestPitchDeg;
+  double? _latestRollDeg;
+
   int _lastSampleTimestampMs = 0;
   bool _isFlushing = false;
   bool _isRunning = false;
@@ -45,20 +74,31 @@ class SensorStreamingService {
       timeout,
     );
 
+    var fusedOrientationAvailable = false;
+    try {
+      fusedOrientationAvailable = await MotionCore.isAvailable();
+    } catch (_) {
+      fusedOrientationAvailable = false;
+    }
+
     return SensorAccessStatus(
       accelerometerAvailable: accelerometerAvailable,
       gyroscopeAvailable: gyroscopeAvailable,
+      fusedOrientationAvailable: fusedOrientationAvailable,
       checkedAt: DateTime.now(),
     );
   }
 
-  void start(SensorBatchCallback onBatch) {
+  Future<void> start(SensorBatchCallback onBatch) async {
     if (_isRunning) {
       return;
     }
 
     _buffer.clear();
     _lastSampleTimestampMs = 0;
+    _latestAzimuthDeg = null;
+    _latestPitchDeg = null;
+    _latestRollDeg = null;
     _isRunning = true;
 
     _gyroscopeSubscription = gyroscopeEventStream().listen(
@@ -74,6 +114,22 @@ class SensorStreamingService {
       },
       cancelOnError: false,
     );
+
+    try {
+      if (await MotionCore.isAvailable()) {
+        _motionSubscription = MotionCore.motionStream.listen(
+          (MotionData data) {
+            if (!_isRunning) return;
+            final o = mobiActOrientationFromMotion(data);
+            _latestAzimuthDeg = o.azimuthDeg;
+            _latestPitchDeg = o.pitchDeg;
+            _latestRollDeg = o.rollDeg;
+          },
+          onError: (_) {},
+          cancelOnError: false,
+        );
+      }
+    } catch (_) {}
 
     _accelerometerSubscription = accelerometerEventStream().listen(
       (event) {
@@ -94,6 +150,9 @@ class SensorStreamingService {
             gyroX: _latestGyroX,
             gyroY: _latestGyroY,
             gyroZ: _latestGyroZ,
+            azimuth: _latestAzimuthDeg,
+            pitch: _latestPitchDeg,
+            roll: _latestRollDeg,
           ),
         );
 
@@ -110,6 +169,8 @@ class SensorStreamingService {
 
   Future<void> stop() async {
     _isRunning = false;
+    await _motionSubscription?.cancel();
+    _motionSubscription = null;
     await _accelerometerSubscription?.cancel();
     await _gyroscopeSubscription?.cancel();
     _accelerometerSubscription = null;

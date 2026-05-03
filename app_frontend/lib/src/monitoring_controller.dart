@@ -523,6 +523,7 @@ class MonitoringController extends ChangeNotifier {
       final fallback = SensorAccessStatus(
         accelerometerAvailable: false,
         gyroscopeAvailable: false,
+        fusedOrientationAvailable: false,
         checkedAt: DateTime.now(),
       );
       _sensorAccessStatus = fallback;
@@ -707,7 +708,7 @@ class MonitoringController extends ChangeNotifier {
       );
 
       await _persistIdentifiers();
-      _sensorService.start(_handleSensorBatch);
+      await _sensorService.start(_handleSensorBatch);
       _statusMessage = 'Monitoring is live. The phone is now streaming sensor batches.';
     } catch (error) {
       _isStreaming = false;

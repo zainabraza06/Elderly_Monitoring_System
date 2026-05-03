@@ -35,15 +35,29 @@ def _resample_rows(data: np.ndarray, target_len: int) -> np.ndarray:
     return out
 
 
-def samples_to_feature_vector(samples: list[dict[str, Any]]) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+def _sample_ori_degrees(s: dict[str, Any]) -> tuple[float, float, float]:
+    """MobiAct ori columns: azimuth (z), pitch (x), roll (y) in degrees — optional per axis."""
+
+    def g(key: str) -> float:
+        v = s.get(key)
+        if v is None:
+            return 0.0
+        return float(v)
+
+    return g("azimuth"), g("pitch"), g("roll")
+
+
+def samples_to_feature_vector(samples: list[dict[str, Any]]) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
-    Returns (enhanced_116,) float vector, acc (300,3), gyro (300,3) for fall-type path.
+    Returns enhanced 116-D vector, acc (300,3), gyro (300,3), ori (300,3) for fall-type path.
+    Orientation defaults to zeros when [azimuth, pitch, roll] are absent (degrees).
     """
     if not samples:
         raise ValueError("empty samples")
     n = len(samples)
     acc = np.zeros((n, 3), dtype=np.float64)
     gyro = np.zeros((n, 3), dtype=np.float64)
+    ori = np.zeros((n, 3), dtype=np.float64)
     for i, s in enumerate(samples):
         acc[i, 0] = float(s.get("acc_x", 0.0))
         acc[i, 1] = float(s.get("acc_y", 0.0))
@@ -51,10 +65,14 @@ def samples_to_feature_vector(samples: list[dict[str, Any]]) -> tuple[np.ndarray
         gyro[i, 0] = float(s.get("gyro_x", 0.0))
         gyro[i, 1] = float(s.get("gyro_y", 0.0))
         gyro[i, 2] = float(s.get("gyro_z", 0.0))
+        az, pit, rol = _sample_ori_degrees(s)
+        ori[i, 0] = az
+        ori[i, 1] = pit
+        ori[i, 2] = rol
 
     acc_300 = _resample_rows(acc, _WINDOW)
     gyro_300 = _resample_rows(gyro, _WINDOW)
-    ori_300 = np.zeros((_WINDOW, 3), dtype=np.float64)
+    ori_300 = _resample_rows(ori, _WINDOW)
 
     _ensure_scripts()
     from baseline_fall.enhanced_features import extract_enhanced_features
@@ -63,10 +81,10 @@ def samples_to_feature_vector(samples: list[dict[str, Any]]) -> tuple[np.ndarray
     yb = gyro_300[np.newaxis, ...]
     zb = ori_300[np.newaxis, ...]
     feat = extract_enhanced_features(xb, yb, zb)
-    return feat[0], acc_300, gyro_300
+    return feat[0], acc_300, gyro_300, ori_300
 
 
-def acc_gyro_to_window_lists(acc: np.ndarray, gyro: np.ndarray) -> tuple[list[list[float]], list[list[float]]]:
-    acc_l = acc.tolist()
-    gyro_l = gyro.tolist()
-    return acc_l, gyro_l
+def acc_gyro_ori_to_window_lists(
+    acc: np.ndarray, gyro: np.ndarray, ori: np.ndarray
+) -> tuple[list[list[float]], list[list[float]], list[list[float]]]:
+    return acc.tolist(), gyro.tolist(), ori.tolist()

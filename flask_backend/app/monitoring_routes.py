@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 from flask_backend.app.auth_jwt import create_token, decode_token, hash_password, verify_password
 from flask_backend.app.database import get_connection, init_schema, iso_now, seed_default_admin
 from flask_backend.app.detector_state import build_detection_payload
-from flask_backend.app.ml_bridge import acc_gyro_to_window_lists, samples_to_feature_vector
+from flask_backend.app.ml_bridge import acc_gyro_ori_to_window_lists, samples_to_feature_vector
 from flask_backend.app.schemas_fall_feedback import FallFeedbackAck, FallFeedbackEvent
 from flask_backend.app.schemas_motion import MotionInferenceRequest, MotionInferenceResponse
 from flask_backend.app.services.motion_xgb_service import InferenceArtifacts, run_inference
@@ -121,6 +121,10 @@ class SamplePayload(BaseModel):
     gyro_x: float
     gyro_y: float
     gyro_z: float
+    # MobiAct *_ori_*.txt convention: Azimuth, Pitch, Roll in degrees (optional).
+    azimuth: float | None = None
+    pitch: float | None = None
+    roll: float | None = None
 
 
 class IngestLiveBody(BaseModel):
@@ -498,9 +502,9 @@ def ingest_live(body: IngestLiveBody):
     art = _get_art()
     thr = float(art.fall_threshold) if art is not None else 0.5
 
-    samples_dict = [s.model_dump() for s in body.samples]
-    feat_vec, acc300, gyro300 = samples_to_feature_vector(samples_dict)
-    acc_w, gyro_w = acc_gyro_to_window_lists(acc300, gyro300)
+    samples_dict = [s.model_dump(exclude_none=True) for s in body.samples]
+    feat_vec, acc300, gyro300, ori300 = samples_to_feature_vector(samples_dict)
+    acc_w, gyro_w, ori_w = acc_gyro_ori_to_window_lists(acc300, gyro300, ori300)
 
     inferred_activity: str | None = None
     ml_ok = False
@@ -515,7 +519,7 @@ def ingest_live(body: IngestLiveBody):
             predict_fall_type=True,
             acc_window=acc_w,
             gyro_window=gyro_w,
-            ori_window=None,
+            ori_window=ori_w,
         )
         p_fall = float(raw["fall_probability"])
         branch = str(raw.get("branch", ""))

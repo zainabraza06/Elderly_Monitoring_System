@@ -29,6 +29,7 @@ class MotionInferenceHelper {
       predictFallType: predictFallType,
       accWindow: sendWindows ? MotionFeatureExtractor.accMatrix300(samples) : null,
       gyroWindow: sendWindows ? MotionFeatureExtractor.gyroMatrix300(samples) : null,
+      oriWindow: sendWindows ? MotionFeatureExtractor.oriMatrix300(samples) : null,
     );
     return MotionInferenceResponseModel.fromJson(raw);
   }

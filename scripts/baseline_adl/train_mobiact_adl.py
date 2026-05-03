@@ -167,7 +167,7 @@ def main() -> int:
 
     adl_dir = args.models_dir / "baseline_adl"
     adl_dir.mkdir(parents=True, exist_ok=True)
-    joblib.dump(best_est, adl_dir / "adl_classifier.pkl")
+    joblib.dump(best_est, adl_dir / "best_adl_model.pkl")
     joblib.dump(scaler, adl_dir / "scaler_adl.pkl")
     joblib.dump(label_encoder, adl_dir / "adl_label_encoder.pkl")
 
@@ -190,7 +190,7 @@ def main() -> int:
     (adl_dir / "adl_training_summary.json").write_text(
         json.dumps(summary, indent=2), encoding="utf-8"
     )
-    print(f"Saved → {adl_dir / 'adl_classifier.pkl'} (canonical for inference)")
+    print(f"Saved → {adl_dir / 'best_adl_model.pkl'} (canonical for inference; manifest baseline_adl/model_path)")
     print("Update manifest path if needed, then: py scripts/sync_inference_manifest.py")
     return 0
 

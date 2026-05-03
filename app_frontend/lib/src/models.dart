@@ -437,10 +437,13 @@ class SensorAccessStatus {
     required this.accelerometerAvailable,
     required this.gyroscopeAvailable,
     required this.checkedAt,
+    this.fusedOrientationAvailable = false,
   });
 
   final bool accelerometerAvailable;
   final bool gyroscopeAvailable;
+  /// True when [motion_core] rotation-vector / Core Motion fusion is available (optional).
+  final bool fusedOrientationAvailable;
   final DateTime checkedAt;
 
   bool get allAvailable => accelerometerAvailable && gyroscopeAvailable;
@@ -455,6 +458,9 @@ class SensorReadingPayload {
     required this.gyroX,
     required this.gyroY,
     required this.gyroZ,
+    this.azimuth,
+    this.pitch,
+    this.roll,
   });
 
   final int timestampMs;
@@ -464,6 +470,10 @@ class SensorReadingPayload {
   final double gyroX;
   final double gyroY;
   final double gyroZ;
+  /// MobiAct `*_ori_*.txt` convention: degrees. Optional; omit in JSON if unknown.
+  final double? azimuth;
+  final double? pitch;
+  final double? roll;
 
   factory SensorReadingPayload.fromJson(Map<String, dynamic> json) {
     return SensorReadingPayload(
@@ -474,11 +484,14 @@ class SensorReadingPayload {
       gyroX: (json['gyro_x'] as num?)?.toDouble() ?? 0.0,
       gyroY: (json['gyro_y'] as num?)?.toDouble() ?? 0.0,
       gyroZ: (json['gyro_z'] as num?)?.toDouble() ?? 0.0,
+      azimuth: (json['azimuth'] as num?)?.toDouble(),
+      pitch: (json['pitch'] as num?)?.toDouble(),
+      roll: (json['roll'] as num?)?.toDouble(),
     );
   }
 
   Map<String, dynamic> toJson() {
-    return {
+    final m = <String, dynamic>{
       'timestamp_ms': timestampMs,
       'acc_x': accX,
       'acc_y': accY,
@@ -487,6 +500,10 @@ class SensorReadingPayload {
       'gyro_y': gyroY,
       'gyro_z': gyroZ,
     };
+    if (azimuth != null) m['azimuth'] = azimuth!;
+    if (pitch != null) m['pitch'] = pitch!;
+    if (roll != null) m['roll'] = roll!;
+    return m;
   }
 }
 
