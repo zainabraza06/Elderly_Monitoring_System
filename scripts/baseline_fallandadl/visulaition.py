@@ -17,7 +17,7 @@ def plot_comparison(
     fig.suptitle("MobiAct: Complete Model Comparison (Tasks 1 and 2)", fontsize=16, fontweight="bold")
 
     ax1 = plt.subplot(3, 4, 1)
-    best_fall_ml = ml_fall_results[0]
+    best_fall_ml = max(ml_fall_results, key=lambda x: x["F1"])
     cm_fall = confusion_matrix(best_fall_ml["y_true"], best_fall_ml["y_pred"])
     sns.heatmap(
         cm_fall,
@@ -57,7 +57,7 @@ def plot_comparison(
     ax2.set_ylabel("Actual")
 
     ax3 = plt.subplot(3, 4, 3)
-    best_adl_ml = ml_adl_results[0]
+    best_adl_ml = max(ml_adl_results, key=lambda x: x["F1"])
     cm_adl = confusion_matrix(best_adl_ml["y_true"], best_adl_ml["y_pred"])
     sns.heatmap(cm_adl, annot=False, fmt="d", cmap="Reds", ax=ax3, cbar=False)
     ax3.set_title(

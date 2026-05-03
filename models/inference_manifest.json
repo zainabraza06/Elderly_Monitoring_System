@@ -1,0 +1,29 @@
+{
+  "schema_version": "1.1",
+  "description": "Runtime contract. Fall-type uses Colab multi-sensor extract (263 raw) + MI(150) + best classifier, saved under models/baseline_falltype/.",
+  "enhanced_feature_dim": 48,
+  "fall_type_raw_dim": 263,
+  "fall_type_selected_features": 150,
+  "enhanced_pipeline": "Frozen scalers baseline_fall/scaler_fall.pkl & baseline_adl/scaler_adl.pkl expect 48-D (must match training extraction order used when saving models).",
+  "fall_type_pipeline": "CompleteFallFeatureExtractor Colab notebook variant → 263-D raw vector (must match training); NOT the repo padded 350-D row unless you retrained with that.",
+  "fall_type_model_note": "models/baseline_falltype/best_fall_classifier.pkl — winner from Colab (often XGBoost at ~94.8% acc).",
+  "fall_probability_threshold": 0.5,
+  "random_state_training": 42,
+  "artifacts": {
+    "fall_binary": {
+      "model_path": "baseline_fall/fall_detection_xgboost.pkl",
+      "scaler_path": "baseline_fall/scaler_fall.pkl"
+    },
+    "adl": {
+      "model_path": "baseline_adl/adl_classification_xgboost.pkl",
+      "scaler_path": "baseline_adl/scaler_adl.pkl",
+      "label_encoder_path": "baseline_adl/adl_label_encoder.pkl"
+    },
+    "fall_type": {
+      "model_path": "baseline_falltype/best_fall_classifier.pkl",
+      "scaler_path": "baseline_falltype/scaler.pkl",
+      "feature_indices_path": "baseline_falltype/selected_features.pkl",
+      "label_encoder_path": "baseline_falltype/label_encoder.pkl"
+    }
+  }
+}
