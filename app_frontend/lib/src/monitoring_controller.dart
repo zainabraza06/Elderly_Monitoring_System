@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'api_client.dart';
 import 'models.dart';
+import 'motion_inference_helper.dart';
 import 'sensor_streaming_service.dart';
 
 class MonitoringController extends ChangeNotifier {
@@ -74,6 +75,7 @@ class MonitoringController extends ChangeNotifier {
   DateTime? _lastTransmissionAt;
 
   DetectionResultModel? _lastDetection;
+  MotionInferenceResponseModel? _lastMotionInference;
   LiveStatusModel? _liveStatus;
   AlertRecordModel? _activeAlert;
   TelemetrySnapshotModel? _latestTelemetry;
@@ -126,6 +128,7 @@ class MonitoringController extends ChangeNotifier {
   int get lastBatchSize => _lastBatchSize;
   DateTime? get lastTransmissionAt => _lastTransmissionAt;
   DetectionResultModel? get lastDetection => _lastDetection;
+  MotionInferenceResponseModel? get lastMotionInference => _lastMotionInference;
   LiveStatusModel? get liveStatus => _liveStatus;
   AlertRecordModel? get activeAlert => _activeAlert;
   TelemetrySnapshotModel? get latestTelemetry => _latestTelemetry;
@@ -666,6 +669,7 @@ class MonitoringController extends ChangeNotifier {
       _lastBatchSize = 0;
       _lastTransmissionAt = null;
       _lastDetection = null;
+      _lastMotionInference = null;
       _activeAlert = null;
       _latestTelemetry = null;
       _liveStatus = LiveStatusModel(
@@ -886,6 +890,19 @@ class MonitoringController extends ChangeNotifier {
       _lastDetection = response.detection;
       _liveStatus = response.liveStatus;
       _latestTelemetry = response.telemetry;
+
+      try {
+        final motion = await MotionInferenceHelper.inferFromSamples(
+          _apiClient,
+          samples,
+          predictFallType: false,
+        );
+        _lastMotionInference = motion;
+        _statusMessage =
+            '${response.detection.message} · ${motion.summaryLine}';
+      } catch (_) {
+        // Optional stack: `/api/v1/inference/motion` returns 503 when models are missing.
+      }
 
       if (response.activeAlert != null) {
         _activeAlert = response.activeAlert;

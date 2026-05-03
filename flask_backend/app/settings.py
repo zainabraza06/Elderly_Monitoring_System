@@ -1,13 +1,13 @@
-"""Paths and environment for the FastAPI service."""
+"""Paths for FastAPI inference service."""
 
 from __future__ import annotations
 
 import os
 from pathlib import Path
 
-_PKG_ROOT = Path(__file__).resolve().parent
-_FLASK_BACKEND_ROOT = _PKG_ROOT.parent
-_REPO_ROOT = _FLASK_BACKEND_ROOT.parent
+_PKG = Path(__file__).resolve().parent
+_FLASK_ROOT = _PKG.parent
+_REPO_ROOT = _FLASK_ROOT.parent
 
 
 def model_root() -> Path:

@@ -1,12 +1,12 @@
 {
-  "schema_version": "1.1",
-  "description": "Runtime contract. Fall-type uses Colab multi-sensor extract (263 raw) + MI(150) + best classifier, saved under models/baseline_falltype/.",
-  "enhanced_feature_dim": 48,
+  "schema_version": "1.2",
+  "description": "116-D enhanced features for fall + ADL (RobustScaler); 263-D raw for fall-type (Colab fall classifier).",
+  "enhanced_feature_dim": 116,
   "fall_type_raw_dim": 263,
   "fall_type_selected_features": 150,
-  "enhanced_pipeline": "Frozen scalers baseline_fall/scaler_fall.pkl & baseline_adl/scaler_adl.pkl expect 48-D (must match training extraction order used when saving models).",
-  "fall_type_pipeline": "CompleteFallFeatureExtractor Colab notebook variant → 263-D raw vector (must match training); NOT the repo padded 350-D row unless you retrained with that.",
-  "fall_type_model_note": "models/baseline_falltype/best_fall_classifier.pkl — winner from Colab (often XGBoost at ~94.8% acc).",
+  "enhanced_pipeline": "scripts/baseline_fall/enhanced_features.py extract_enhanced_features — must match training after train_mobiact_baselines.py",
+  "fall_type_pipeline": "263-D Colab CompleteFallFeatureExtractor; models/baseline_falltype/",
+  "fall_type_model_note": "baseline_falltype/best_fall_classifier.pkl",
   "fall_probability_threshold": 0.5,
   "random_state_training": 42,
   "artifacts": {

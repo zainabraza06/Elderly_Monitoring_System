@@ -1,4 +1,4 @@
-"""Request / response models for motion inference (strict validation)."""
+"""Motion inference request/response."""
 
 from __future__ import annotations
 
@@ -10,22 +10,13 @@ class MotionInferenceRequest(BaseModel):
 
     enhanced_features: list[float] = Field(
         ...,
-        description=(
-            "Float vector length = models/inference_manifest.json enhanced_feature_dim "
-            "(frozen fall + ADL scalers; must match training extraction order)."
-        ),
+        description="Length = inference_manifest enhanced_feature_dim (116 after train_mobiact_baselines).",
     )
     fall_type_features: list[float] | None = Field(
         default=None,
-        description=(
-            "263 floats: raw multi-sensor fall-type vector (same extraction as Colab training); "
-            "must match models/inference_manifest.json fall_type_raw_dim after scaler.fit shape."
-        ),
+        description="Length = fall_type_raw_dim (263) when requesting 4-class fall type.",
     )
-    predict_fall_type: bool = Field(
-        default=True,
-        description="If true and fall_type_features provided, run fall-type model when fall is predicted.",
-    )
+    predict_fall_type: bool = Field(default=True)
 
 
 class MotionInferenceResponse(BaseModel):

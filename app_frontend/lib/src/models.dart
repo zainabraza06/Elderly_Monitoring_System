@@ -259,6 +259,63 @@ class DetectionResultModel {
   }
 }
 
+/// Response from `POST /api/v1/inference/motion` (XGBoost pipeline).
+class MotionInferenceResponseModel {
+  MotionInferenceResponseModel({
+    required this.isFall,
+    required this.fallProbability,
+    required this.fallThreshold,
+    required this.branch,
+    this.activityLabel,
+    this.activityClassIndex,
+    this.fallTypeCode,
+    this.fallTypeLabel,
+    this.fallTypeClassIndex,
+    this.fallTypeSkippedReason,
+    required this.schemaVersion,
+  });
+
+  final bool isFall;
+  final double fallProbability;
+  final double fallThreshold;
+  final String branch;
+  final String? activityLabel;
+  final int? activityClassIndex;
+  final String? fallTypeCode;
+  final String? fallTypeLabel;
+  final int? fallTypeClassIndex;
+  final String? fallTypeSkippedReason;
+  final String schemaVersion;
+
+  factory MotionInferenceResponseModel.fromJson(Map<String, dynamic> json) {
+    return MotionInferenceResponseModel(
+      isFall: json['is_fall'] as bool? ?? false,
+      fallProbability: (json['fall_probability'] as num?)?.toDouble() ?? 0.0,
+      fallThreshold: (json['fall_threshold'] as num?)?.toDouble() ?? 0.5,
+      branch: json['branch'] as String? ?? 'unknown',
+      activityLabel: json['activity_label'] as String?,
+      activityClassIndex: json['activity_class_index'] as int?,
+      fallTypeCode: json['fall_type_code'] as String?,
+      fallTypeLabel: json['fall_type_label'] as String?,
+      fallTypeClassIndex: json['fall_type_class_index'] as int?,
+      fallTypeSkippedReason: json['fall_type_skipped_reason'] as String?,
+      schemaVersion: json['schema_version'] as String? ?? '1.0',
+    );
+  }
+
+  String get summaryLine {
+    if (isFall) {
+      final ft = fallTypeLabel ?? fallTypeCode;
+      if (ft != null && ft.isNotEmpty) {
+        return 'Fall detected (${(fallProbability * 100).toStringAsFixed(1)}%): type $ft';
+      }
+      return 'Fall detected (${(fallProbability * 100).toStringAsFixed(1)}%)';
+    }
+    final act = activityLabel ?? 'ADL';
+    return 'No fall (${(fallProbability * 100).toStringAsFixed(1)}%): $act';
+  }
+}
+
 class LiveStatusModel {
   LiveStatusModel({
     required this.patientId,

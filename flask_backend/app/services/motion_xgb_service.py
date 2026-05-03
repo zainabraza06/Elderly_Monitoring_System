@@ -1,4 +1,4 @@
-"""Load frozen XGBoost (+ scalers) and run two-stage fall -> fall-type; ADL when not fall."""
+"""Load frozen models; fall → optional fall-type; else ADL."""
 
 from __future__ import annotations
 
@@ -28,53 +28,43 @@ class InferenceArtifacts:
     fall_threshold: float
 
 
-def _load_joblib(path: Path) -> Any:
-    return joblib.load(path)
-
-
 def load_artifacts(manifest_path: Path, models_dir: Path) -> InferenceArtifacts:
     manifest_path = manifest_path.resolve()
     models_dir = models_dir.resolve()
-    if not manifest_path.is_file():
-        raise FileNotFoundError(f"Inference manifest missing: {manifest_path}")
-
     with open(manifest_path, encoding="utf-8") as f:
         manifest = json.load(f)
 
     enhanced_dim = int(manifest["enhanced_feature_dim"])
     fall_type_dim = int(manifest["fall_type_raw_dim"])
     threshold = float(manifest.get("fall_probability_threshold", 0.5))
-
     art = manifest["artifacts"]
 
     def p(rel: str) -> Path:
         out = (models_dir / rel).resolve()
         if not out.is_file():
-            raise FileNotFoundError(f"Missing artifact: {out}")
+            raise FileNotFoundError(str(out))
         return out
 
-    fall_model = _load_joblib(p(art["fall_binary"]["model_path"]))
-    fall_scaler = _load_joblib(p(art["fall_binary"]["scaler_path"]))
-    adl_model = _load_joblib(p(art["adl"]["model_path"]))
-    adl_scaler = _load_joblib(p(art["adl"]["scaler_path"]))
-    adl_encoder = _load_joblib(p(art["adl"]["label_encoder_path"]))
+    fall_model = joblib.load(p(art["fall_binary"]["model_path"]))
+    fall_scaler = joblib.load(p(art["fall_binary"]["scaler_path"]))
+    adl_model = joblib.load(p(art["adl"]["model_path"]))
+    adl_scaler = joblib.load(p(art["adl"]["scaler_path"]))
+    adl_encoder = joblib.load(p(art["adl"]["label_encoder_path"]))
 
-    fall_type_model = _load_joblib(p(art["fall_type"]["model_path"]))
-    fall_type_scaler = _load_joblib(p(art["fall_type"]["scaler_path"]))
-    fall_type_indices = np.asarray(_load_joblib(p(art["fall_type"]["feature_indices_path"])), dtype=int)
-    fall_type_encoder = _load_joblib(p(art["fall_type"]["label_encoder_path"]))
+    fall_type_model = joblib.load(p(art["fall_type"]["model_path"]))
+    fall_type_scaler = joblib.load(p(art["fall_type"]["scaler_path"]))
+    fall_type_indices = np.asarray(joblib.load(p(art["fall_type"]["feature_indices_path"])), dtype=int)
+    fall_type_encoder = joblib.load(p(art["fall_type"]["label_encoder_path"]))
 
-    # Strict alignment checks when sklearn exposes `n_features_in_`.
-    _nf = getattr(fall_scaler, "n_features_in_", None)
-    if _nf is not None and int(_nf) != enhanced_dim:
-        raise ValueError(f"Fall scaler expects {_nf} features, manifest says {enhanced_dim}")
-    _na = getattr(adl_scaler, "n_features_in_", None)
-    if _na is not None and int(_na) != enhanced_dim:
-        raise ValueError(f"ADL scaler expects {_na} features, manifest says {enhanced_dim}")
-
+    nf = getattr(fall_scaler, "n_features_in_", None)
+    if nf is not None and int(nf) != enhanced_dim:
+        raise ValueError(f"Fall scaler wants {nf}, manifest {enhanced_dim}")
+    na = getattr(adl_scaler, "n_features_in_", None)
+    if na is not None and int(na) != enhanced_dim:
+        raise ValueError(f"ADL scaler wants {na}, manifest {enhanced_dim}")
     ft_n = getattr(fall_type_scaler, "n_features_in_", None)
     if ft_n is not None and int(ft_n) != fall_type_dim:
-        raise ValueError(f"Fall-type scaler expects {ft_n} features, manifest says {fall_type_dim}")
+        raise ValueError(f"Fall-type scaler wants {ft_n}, manifest {fall_type_dim}")
 
     return InferenceArtifacts(
         manifest=manifest,
@@ -102,23 +92,17 @@ def run_inference(
 ) -> dict[str, Any]:
     x = np.asarray(enhanced_features, dtype=np.float64).reshape(1, -1)
     if x.shape[1] != art.enhanced_dim:
-        raise ValueError(
-            f"enhanced_features length {x.shape[1]} != expected {art.enhanced_dim}"
-        )
+        raise ValueError(f"enhanced_features length {x.shape[1]} != {art.enhanced_dim}")
 
     xf = art.fall_scaler.transform(x)
-    if hasattr(art.fall_model, "predict_proba"):
-        p_fall = float(art.fall_model.predict_proba(xf)[0, 1])
-    else:
-        p_fall = float(max(0.0, min(1.0, float(art.fall_model.decision_function(xf)[0]))))
-
+    p_fall = float(art.fall_model.predict_proba(xf)[0, 1])
     is_fall = p_fall >= art.fall_threshold
 
     out: dict[str, Any] = {
         "is_fall": is_fall,
         "fall_probability": p_fall,
         "fall_threshold": art.fall_threshold,
-        "schema_version": art.manifest.get("schema_version", "1.0"),
+        "schema_version": str(art.manifest.get("schema_version", "1.0")),
     }
 
     if not is_fall:
@@ -143,17 +127,13 @@ def run_inference(
         out["fall_type_label"] = None
         out["fall_type_class_index"] = None
         out["fall_type_skipped_reason"] = (
-            "predict_fall_type_disabled"
-            if not predict_fall_type
-            else "fall_type_features_missing"
+            "predict_fall_type_disabled" if not predict_fall_type else "fall_type_features_missing"
         )
         return out
 
     ft = np.asarray(fall_type_features, dtype=np.float64).reshape(1, -1)
     if ft.shape[1] != art.fall_type_dim:
-        raise ValueError(
-            f"fall_type_features length {ft.shape[1]} != expected {art.fall_type_dim}"
-        )
+        raise ValueError(f"fall_type_features length {ft.shape[1]} != {art.fall_type_dim}")
 
     xs = art.fall_type_scaler.transform(ft)
     xsel = xs[:, art.fall_type_indices]

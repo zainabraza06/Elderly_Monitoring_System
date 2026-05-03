@@ -77,6 +77,13 @@ class BackendApiClient {
     throw ApiException('Unexpected response list format from backend.');
   }
 
+  /// Returns manifest-backed dimensions when the inference stack is loaded (503 if not).
+  Future<Map<String, dynamic>> getInferenceStatus() async {
+    return _asMap(
+      await _send(http.get(_uri('/api/v1/inference/status'))),
+    );
+  }
+
   Future<void> ping() async {
     await _send(http.get(_uri('/api/v1/health')));
   }
