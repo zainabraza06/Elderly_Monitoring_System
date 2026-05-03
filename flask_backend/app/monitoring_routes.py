@@ -174,10 +174,55 @@ class PatientCredBody(BaseModel):
     notes: str | None = None
 
 
+class AdminCaregiverCreateBody(BaseModel):
+    full_name: str
+    email: str
+    password: str
+
+
+class AdminPatientCreateBody(BaseModel):
+    full_name: str
+    age: int | None = None
+    # If set, must be an existing caregiver user id; also inserts caregiver_patient.
+    caregiver_id: str | None = None
+
+
 def count_caregiver_assignments(conn, caregiver_id: str) -> int:
     c = conn.cursor()
     c.execute("SELECT COUNT(*) FROM caregiver_patient WHERE caregiver_id = ?", (caregiver_id,))
     return int(c.fetchone()[0])
+
+
+def _delete_patient_cascade(c: Any, patient_id: str) -> bool:
+    """Remove patient row and dependents; delete linked elder login if present. Returns False if patient missing."""
+    c.execute("SELECT elder_user_id FROM patients WHERE id = ?", (patient_id,))
+    pr = c.fetchone()
+    if not pr:
+        return False
+    elder_uid = pr["elder_user_id"]
+    c.execute("DELETE FROM alerts WHERE patient_id = ?", (patient_id,))
+    c.execute("DELETE FROM fall_incidents WHERE patient_id = ?", (patient_id,))
+    c.execute("DELETE FROM sessions WHERE patient_id = ?", (patient_id,))
+    c.execute("DELETE FROM devices WHERE patient_id = ?", (patient_id,))
+    c.execute("DELETE FROM patient_live WHERE patient_id = ?", (patient_id,))
+    c.execute("DELETE FROM caregiver_patient WHERE patient_id = ?", (patient_id,))
+    c.execute("DELETE FROM patients WHERE id = ?", (patient_id,))
+    if elder_uid:
+        c.execute("DELETE FROM users WHERE id = ? AND role = 'elder'", (str(elder_uid),))
+    return True
+
+
+def _collect_patient_ids_for_caregiver(c: Any, caregiver_id: str) -> list[str]:
+    out: list[str] = []
+    c.execute("SELECT id FROM patients WHERE caregiver_id = ?", (caregiver_id,))
+    for row in c.fetchall():
+        out.append(str(row["id"]))
+    c.execute("SELECT patient_id FROM caregiver_patient WHERE caregiver_id = ?", (caregiver_id,))
+    for row in c.fetchall():
+        pid = str(row["patient_id"])
+        if pid not in out:
+            out.append(pid)
+    return out
 
 
 def tick_fall_escalations(conn) -> None:
@@ -303,6 +348,27 @@ def caregiver_login(body: CaregiverLoginBody):
             "token_type": "bearer",
             "caregiver": {"id": uid, "full_name": row["full_name"], "email": em},
         }
+
+
+@router.get("/api/v1/caregiver/my-patients")
+def caregiver_my_patients(authorization: Annotated[str | None, Header()] = None):
+    """Patients assigned to the signed-in caretaker (same account can have up to two)."""
+    claims = _need_role(_claims_opt(authorization), {"caregiver"})
+    cid = str(claims["sub"])
+    init_schema()
+    with get_connection() as conn:
+        c = conn.cursor()
+        c.execute(
+            "SELECT id, full_name, age FROM patients WHERE caregiver_id = ? ORDER BY full_name COLLATE NOCASE",
+            (cid,),
+        )
+        rows = c.fetchall()
+    return {
+        "patients": [
+            {"id": row["id"], "full_name": row["full_name"], "age": row["age"]}
+            for row in rows
+        ],
+    }
 
 
 @router.post("/api/v1/auth/admin/login")
@@ -958,6 +1024,151 @@ def admin_dashboard(authorization: Annotated[str | None, Header()] = None):
         "datasets": ["SisFall", "MobiAct"],
         "note": "Train scripts under scripts/; SisFall loader: scripts/sisfall/",
     }
+
+
+@router.get("/api/v1/admin/caregivers")
+def admin_list_caregivers(authorization: Annotated[str | None, Header()] = None):
+    _need_role(_claims_opt(authorization), {"admin"})
+    init_schema()
+    with get_connection() as conn:
+        c = conn.cursor()
+        c.execute(
+            "SELECT id, email, full_name, created_at FROM users WHERE role = 'caregiver' ORDER BY created_at DESC"
+        )
+        rows = c.fetchall()
+    return [
+        {
+            "id": row["id"],
+            "email": row["email"],
+            "full_name": row["full_name"],
+            "created_at": row["created_at"],
+        }
+        for row in rows
+    ]
+
+
+@router.post("/api/v1/admin/caregivers")
+def admin_create_caregiver(
+    body: AdminCaregiverCreateBody,
+    authorization: Annotated[str | None, Header()] = None,
+):
+    _need_role(_claims_opt(authorization), {"admin"})
+    init_schema()
+    seed_default_admin()
+    em = body.email.strip().lower()
+    uid = uuid.uuid4().hex
+    with get_connection() as conn:
+        c = conn.cursor()
+        c.execute("SELECT id FROM users WHERE email = ?", (em,))
+        if c.fetchone():
+            raise HTTPException(status_code=400, detail="Email already registered")
+        c.execute(
+            """INSERT INTO users (id, email, username, password_hash, role, full_name, created_at)
+               VALUES (?,?,?,?,?,?,?)""",
+            (
+                uid,
+                em,
+                None,
+                hash_password(body.password),
+                "caregiver",
+                body.full_name.strip(),
+                iso_now(),
+            ),
+        )
+    return {"id": uid, "email": em, "full_name": body.full_name.strip()}
+
+
+@router.delete("/api/v1/admin/caregivers/{user_id}")
+def admin_delete_caregiver(user_id: str, authorization: Annotated[str | None, Header()] = None):
+    _need_role(_claims_opt(authorization), {"admin"})
+    init_schema()
+    with get_connection() as conn:
+        c = conn.cursor()
+        c.execute("SELECT role FROM users WHERE id = ?", (user_id,))
+        row = c.fetchone()
+        if not row or row["role"] != "caregiver":
+            raise HTTPException(status_code=404, detail="Caretaker not found")
+        for pid in _collect_patient_ids_for_caregiver(c, user_id):
+            _delete_patient_cascade(c, pid)
+        c.execute("DELETE FROM caregiver_patient WHERE caregiver_id = ?", (user_id,))
+        c.execute("DELETE FROM users WHERE id = ? AND role = 'caregiver'", (user_id,))
+    return {"ok": True}
+
+
+@router.get("/api/v1/admin/patients")
+def admin_list_patients(authorization: Annotated[str | None, Header()] = None):
+    _need_role(_claims_opt(authorization), {"admin"})
+    init_schema()
+    with get_connection() as conn:
+        c = conn.cursor()
+        c.execute(
+            """
+            SELECT p.id, p.full_name, p.age, p.caregiver_id, p.elder_user_id, u.username AS elder_username
+            FROM patients p
+            LEFT JOIN users u ON u.id = p.elder_user_id AND u.role = 'elder'
+            ORDER BY p.full_name
+            """
+        )
+        rows = c.fetchall()
+    return [
+        {
+            "id": row["id"],
+            "full_name": row["full_name"],
+            "age": row["age"],
+            "caregiver_id": row["caregiver_id"],
+            "elder_user_id": row["elder_user_id"],
+            "elder_username": row["elder_username"],
+        }
+        for row in rows
+    ]
+
+
+@router.post("/api/v1/admin/patients")
+def admin_create_patient(
+    body: AdminPatientCreateBody,
+    authorization: Annotated[str | None, Header()] = None,
+):
+    _need_role(_claims_opt(authorization), {"admin"})
+    init_schema()
+    raw_cg = (body.caregiver_id or "").strip()
+    cid: str | None = raw_cg or None
+    pid = uuid.uuid4().hex
+    with get_connection() as conn:
+        c = conn.cursor()
+        if cid:
+            c.execute("SELECT id FROM users WHERE id = ? AND role = 'caregiver'", (cid,))
+            if not c.fetchone():
+                raise HTTPException(status_code=400, detail="caregiver_id is not a valid caretaker")
+        c.execute(
+            """INSERT INTO patients (id, full_name, age, caregiver_id, home_address, emergency_contact, notes)
+               VALUES (?,?,?,?,?,?,?)""",
+            (
+                pid,
+                body.full_name.strip(),
+                body.age,
+                cid,
+                "",
+                "",
+                "",
+            ),
+        )
+        if cid:
+            c.execute(
+                "INSERT OR IGNORE INTO caregiver_patient (caregiver_id, patient_id) VALUES (?,?)",
+                (cid, pid),
+            )
+    return {"id": pid, "full_name": body.full_name.strip(), "caregiver_id": cid}
+
+
+@router.delete("/api/v1/admin/patients/{patient_id}")
+def admin_delete_patient(patient_id: str, authorization: Annotated[str | None, Header()] = None):
+    _need_role(_claims_opt(authorization), {"admin"})
+    init_schema()
+    with get_connection() as conn:
+        c = conn.cursor()
+        if not _delete_patient_cascade(c, patient_id):
+            raise HTTPException(status_code=404, detail="Patient not found")
+    return {"ok": True}
 
 
 @router.post("/api/v1/events/fall-feedback")

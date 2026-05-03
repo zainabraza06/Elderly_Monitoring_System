@@ -283,6 +283,18 @@ class BackendApiClient {
         .toList();
   }
 
+  /// Caretaker’s enrolled patients (up to two on the same account).
+  Future<List<CaregiverAssignedPatientModel>> getCaregiverMyPatients() async {
+    final m = _asMap(
+      await _send(http.get(_uri('/api/v1/caregiver/my-patients'), headers: _headers())),
+    );
+    final list = m['patients'] as List<dynamic>? ?? const <dynamic>[];
+    return list
+        .whereType<Map<String, dynamic>>()
+        .map(CaregiverAssignedPatientModel.fromJson)
+        .toList();
+  }
+
   Future<List<AlertRecordModel>> getAlerts({
     String? status,
     String? patientId,
@@ -429,6 +441,72 @@ class BackendApiClient {
   Future<Map<String, dynamic>> getAdminDashboard() async {
     return _asMap(
       await _send(http.get(_uri('/api/v1/admin/dashboard'), headers: _headers())),
+    );
+  }
+
+  Future<List<Map<String, dynamic>>> adminListCaregivers() async {
+    final rows = _asList(
+      await _send(http.get(_uri('/api/v1/admin/caregivers'), headers: _headers())),
+    );
+    return rows.whereType<Map<String, dynamic>>().toList();
+  }
+
+  Future<Map<String, dynamic>> adminCreateCaregiver({
+    required String fullName,
+    required String email,
+    required String password,
+  }) async {
+    return _asMap(
+      await _send(
+        http.post(
+          _uri('/api/v1/admin/caregivers'),
+          headers: _headers(jsonBody: true),
+          body: jsonEncode({
+            'full_name': fullName,
+            'email': email,
+            'password': password,
+          }),
+        ),
+      ),
+    );
+  }
+
+  Future<void> adminDeleteCaregiver(String userId) async {
+    await _send(
+      http.delete(_uri('/api/v1/admin/caregivers/$userId'), headers: _headers()),
+    );
+  }
+
+  Future<List<Map<String, dynamic>>> adminListPatients() async {
+    final rows = _asList(
+      await _send(http.get(_uri('/api/v1/admin/patients'), headers: _headers())),
+    );
+    return rows.whereType<Map<String, dynamic>>().toList();
+  }
+
+  Future<Map<String, dynamic>> adminCreatePatient({
+    required String fullName,
+    int? age,
+    String? caregiverId,
+  }) async {
+    return _asMap(
+      await _send(
+        http.post(
+          _uri('/api/v1/admin/patients'),
+          headers: _headers(jsonBody: true),
+          body: jsonEncode({
+            'full_name': fullName,
+            if (age != null) 'age': age,
+            if (caregiverId != null && caregiverId.trim().isNotEmpty) 'caregiver_id': caregiverId.trim(),
+          }),
+        ),
+      ),
+    );
+  }
+
+  Future<void> adminDeletePatient(String patientId) async {
+    await _send(
+      http.delete(_uri('/api/v1/admin/patients/$patientId'), headers: _headers()),
     );
   }
 

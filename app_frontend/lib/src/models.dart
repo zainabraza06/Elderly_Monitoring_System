@@ -640,6 +640,26 @@ class CaregiverAuthModel {
   }
 }
 
+class CaregiverAssignedPatientModel {
+  CaregiverAssignedPatientModel({
+    required this.id,
+    required this.fullName,
+    this.age,
+  });
+
+  final String id;
+  final String fullName;
+  final int? age;
+
+  factory CaregiverAssignedPatientModel.fromJson(Map<String, dynamic> json) {
+    return CaregiverAssignedPatientModel(
+      id: json['id'] as String? ?? '',
+      fullName: json['full_name'] as String? ?? 'Patient',
+      age: json['age'] as int?,
+    );
+  }
+}
+
 class GeneratedPatientCredentialModel {
   GeneratedPatientCredentialModel({
     required this.patientId,

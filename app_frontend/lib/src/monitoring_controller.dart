@@ -110,7 +110,8 @@ class MonitoringController extends ChangeNotifier {
   String _caregiverAuthEmail = '';
   String? _elderAccessToken;
   DateTime? _lastLocationUploadAt;
-  GeneratedPatientCredentialModel? _lastGeneratedCredential;
+  final List<GeneratedPatientCredentialModel> _credentialHistory = <GeneratedPatientCredentialModel>[];
+  List<CaregiverAssignedPatientModel> _assignedPatients = <CaregiverAssignedPatientModel>[];
 
   bool get initialized => _initialized;
   bool get isBusy => _isBusy;
@@ -164,7 +165,43 @@ class MonitoringController extends ChangeNotifier {
   bool get isCaregiverAuthenticated => _caregiverToken != null && _caregiverToken!.isNotEmpty;
   String get caregiverName => _caregiverName;
   String get caregiverAuthEmail => _caregiverAuthEmail;
-  GeneratedPatientCredentialModel? get lastGeneratedCredential => _lastGeneratedCredential;
+  List<GeneratedPatientCredentialModel> get credentialHistory => List.unmodifiable(_credentialHistory);
+  List<CaregiverAssignedPatientModel> get assignedPatients => List.unmodifiable(_assignedPatients);
+
+  /// Patients to show on the caregiver dashboard (server list, or session credential fallbacks).
+  List<CaregiverAssignedPatientModel> get dashboardPatients {
+    if (_assignedPatients.isNotEmpty) {
+      return List.unmodifiable(_assignedPatients);
+    }
+    return _credentialHistory
+        .map(
+          (g) => CaregiverAssignedPatientModel(
+            id: g.patientId,
+            fullName: g.patientName,
+            age: null,
+          ),
+        )
+        .toList();
+  }
+
+  /// Same account: up to two elder enrollments (matches backend `MAX_ELDERS_PER_CAREGIVER`).
+  bool get canEnrollAnotherPatient {
+    final n =
+        _assignedPatients.isNotEmpty ? _assignedPatients.length : _credentialHistory.length;
+    return n < 2;
+  }
+
+  GeneratedPatientCredentialModel? get lastGeneratedCredential =>
+      _credentialHistory.isEmpty ? null : _credentialHistory.last;
+
+  LiveStatusModel? liveStatusForPatient(String patientId) {
+    for (final row in _livePatients) {
+      if (row.patientId == patientId) {
+        return row;
+      }
+    }
+    return null;
+  }
 
   Future<void> initialize() async {
     if (_initialized) {
@@ -235,6 +272,7 @@ class MonitoringController extends ChangeNotifier {
       await _persistCaregiverAuth();
       _apiClient.setBearerToken(_caregiverToken);
       _statusMessage = 'Caregiver account ready.';
+      unawaited(refreshCaregiverData(silent: true));
     } catch (error) {
       _lastError = _formatError(error);
       _statusMessage = 'Unable to create caregiver account.';
@@ -263,6 +301,7 @@ class MonitoringController extends ChangeNotifier {
       await _persistCaregiverAuth();
       _apiClient.setBearerToken(_caregiverToken);
       _statusMessage = 'Welcome back $_caregiverName.';
+      unawaited(refreshCaregiverData(silent: true));
     } catch (error) {
       _lastError = _formatError(error);
       _statusMessage = 'Unable to sign in.';
@@ -295,7 +334,8 @@ class MonitoringController extends ChangeNotifier {
     _caregiverName = '';
     _caregiverAuthEmail = '';
     _apiClient.setBearerToken(null);
-    _lastGeneratedCredential = null;
+    _credentialHistory.clear();
+    _assignedPatients = <CaregiverAssignedPatientModel>[];
     final preferences = _preferences ?? await SharedPreferences.getInstance();
     _preferences = preferences;
     await preferences.remove(_caregiverTokenKey);
@@ -342,7 +382,10 @@ class MonitoringController extends ChangeNotifier {
         emergencyContact: emergencyContact.trim().isEmpty ? null : emergencyContact.trim(),
         notes: notes.trim().isEmpty ? null : notes.trim(),
       );
-      _lastGeneratedCredential = created;
+      _credentialHistory.add(created);
+      while (_credentialHistory.length > 2) {
+        _credentialHistory.removeAt(0);
+      }
 
       if (_patientName.trim().isEmpty) {
         _patientName = created.patientName;
@@ -351,6 +394,7 @@ class MonitoringController extends ChangeNotifier {
         _emergencyContact = emergencyContact.trim();
       }
       _statusMessage = 'Patient credentials generated successfully.';
+      await refreshCaregiverData(silent: true);
     } catch (error) {
       _lastError = _formatError(error);
       _statusMessage = 'Unable to generate patient credentials.';
@@ -879,6 +923,16 @@ class MonitoringController extends ChangeNotifier {
       _summary = responses[0] as SystemSummaryModel;
       _livePatients = responses[1] as List<LiveStatusModel>;
       _caregiverAlerts = responses[2] as List<AlertRecordModel>;
+
+      if (isCaregiverAuthenticated) {
+        try {
+          _assignedPatients = await _apiClient.getCaregiverMyPatients();
+        } catch (_) {
+          // Keep previous assignment list if this endpoint is unavailable.
+        }
+      } else {
+        _assignedPatients = <CaregiverAssignedPatientModel>[];
+      }
 
       if (_patientId != null) {
         final matched = _livePatients.where((item) => item.patientId == _patientId).toList();

@@ -419,20 +419,38 @@ class _CaregiverEnrollmentScreenState extends State<CaregiverEnrollmentScreen> {
       emergencyContact: _contactCtrl.text,
       notes: _notesCtrl.text,
     );
+    if (!mounted || widget.controller.lastError != null) {
+      return;
+    }
+    _nameCtrl.clear();
+    _ageCtrl.clear();
+    _homeCtrl.clear();
+    _contactCtrl.clear();
+    _notesCtrl.clear();
   }
 
   @override
   Widget build(BuildContext context) {
     final controller = widget.controller;
-    final generated = controller.lastGeneratedCredential;
+    final history = controller.credentialHistory;
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
         _StatusBanner(
           color: const Color(0xFF2A7DA8),
           title: 'Patient Enrollment',
-          message: 'Create patient credentials securely for patient app access.',
+          message:
+              'One caretaker account can hold up to two patients. '
+              'Use “Generate credentials” for each person, then share the login with their device.',
         ),
+        if (!controller.canEnrollAnotherPatient) ...[
+          const SizedBox(height: 8),
+          const _StatusBanner(
+            color: Color(0xFF4A708F),
+            title: 'Patient limit reached',
+            message: 'This account already has two patients. Remove or reassign on the server if you need a change.',
+          ),
+        ],
         const SizedBox(height: 12),
         Container(
           padding: const EdgeInsets.all(16),
@@ -458,40 +476,90 @@ class _CaregiverEnrollmentScreenState extends State<CaregiverEnrollmentScreen> {
               TextField(controller: _notesCtrl, decoration: const InputDecoration(labelText: 'Notes')),
               const SizedBox(height: 12),
               FilledButton.icon(
-                onPressed: controller.isBusy ? null : _generate,
+                onPressed: (controller.isBusy || !controller.canEnrollAnotherPatient) ? null : _generate,
                 icon: const Icon(Icons.vpn_key_outlined),
-                label: const Text('Generate Credentials for Patient'),
+                label: const Text('Generate credentials for patient'),
               ),
             ],
           ),
         ),
-        if (generated != null) ...[
+        for (var i = history.length - 1; i >= 0; i--) ...[
           const SizedBox(height: 12),
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: _cardDecoration(),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text('Generated Patient Access', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 18)),
-                const SizedBox(height: 8),
-                _StatCard(label: 'Patient', value: generated.patientName),
-                const SizedBox(height: 8),
-                _StatCard(label: 'Username', value: generated.username),
-                const SizedBox(height: 8),
-                _StatCard(label: 'Temporary Password', value: generated.temporaryPassword),
-                const SizedBox(height: 8),
-                const Text(
-                  'Share these credentials securely with the patient.',
-                  style: TextStyle(color: Color(0xFF5D7385)),
-                ),
-              ],
-            ),
-          ),
+          _GeneratedCredentialCard(credential: history[i], index: history.length - i),
         ],
       ],
     );
   }
+}
+
+class _GeneratedCredentialCard extends StatelessWidget {
+  const _GeneratedCredentialCard({required this.credential, required this.index});
+
+  final GeneratedPatientCredentialModel credential;
+  final int index;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: _cardDecoration(),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Generated access · patient $index',
+            style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 18),
+          ),
+          const SizedBox(height: 8),
+          _StatCard(label: 'Patient', value: credential.patientName),
+          const SizedBox(height: 8),
+          _StatCard(label: 'Username', value: credential.username),
+          const SizedBox(height: 8),
+          _StatCard(label: 'Temporary Password', value: credential.temporaryPassword),
+          const SizedBox(height: 8),
+          const Text(
+            'Share these credentials securely with the patient device.',
+            style: TextStyle(color: Color(0xFF5D7385)),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+int _dashboardSeverityRank(String severity) {
+  switch (severity) {
+    case 'fall_detected':
+      return 4;
+    case 'high_risk':
+      return 3;
+    case 'medium':
+      return 2;
+    case 'low':
+      return 1;
+    default:
+      return 0;
+  }
+}
+
+LiveStatusModel? _worstLiveAmong(
+  MonitoringController controller,
+  List<CaregiverAssignedPatientModel> patients,
+) {
+  LiveStatusModel? worst;
+  var bestRank = -1;
+  for (final p in patients) {
+    final live = controller.liveStatusForPatient(p.id);
+    if (live == null) {
+      continue;
+    }
+    final r = _dashboardSeverityRank(live.severity);
+    if (r > bestRank) {
+      bestRank = r;
+      worst = live;
+    }
+  }
+  return worst;
 }
 
 class CaregiverDashboard extends StatelessWidget {
@@ -502,35 +570,105 @@ class CaregiverDashboard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final live = controller.liveStatus;
-    final severity = live?.severity ?? 'low';
-    final risk = ((live?.score ?? controller.lastDetection?.score ?? 0) * 100).round();
-    final statusText = live?.lastMessage ?? 'Patient is stable.';
-    final movement = (controller.lastDetection?.fallProbability ?? live?.fallProbability ?? 0) * 100;
+    final patients = controller.dashboardPatients;
+    final worst = _worstLiveAmong(controller, patients);
+    final fallback = controller.liveStatus;
+    final overviewLive = worst ?? (patients.length <= 1 ? fallback : null);
+    final overviewSeverity = overviewLive?.severity ?? 'low';
+    final overviewText = overviewLive?.lastMessage ??
+        (patients.isEmpty
+            ? 'Enroll one or two patients from the Enrollment tab.'
+            : 'When each patient signs in on their device, their live status appears here.');
 
-    return RefreshIndicator(
-      onRefresh: () => controller.refreshCaregiverData(),
-      child: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
+    final children = <Widget>[
+      if (patients.length > 1)
+        const Padding(
+          padding: EdgeInsets.only(bottom: 8),
+          child: Text('Your patients', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 18)),
+        ),
+      _StatusBanner(
+        color: _severityColor(overviewSeverity),
+        title: patients.isEmpty ? 'Overview' : _severityLabel(overviewSeverity),
+        message: overviewText,
+      ),
+      const SizedBox(height: 12),
+    ];
+
+    if (patients.isEmpty) {
+      final live = controller.liveStatus;
+      final severity = live?.severity ?? 'low';
+      final risk = ((live?.score ?? controller.lastDetection?.score ?? 0) * 100).round();
+      final statusText = live?.lastMessage ?? 'No live data yet.';
+      final movement = (controller.lastDetection?.fallProbability ?? live?.fallProbability ?? 0) * 100;
+      children.addAll([
+        _PatientHeroCard(
+          name: controller.patientName.isEmpty ? 'No patient linked' : controller.patientName,
+          age: controller.patientAge == null ? 'Age not set' : '${controller.patientAge} years',
+          severity: severity,
+          lastUpdated: _formatDateTime(controller.lastTransmissionAt),
+        ),
+        const SizedBox(height: 12),
+        _StatusBanner(
+          color: _severityColor(severity),
+          title: _severityLabel(severity),
+          message: statusText,
+        ),
+        const SizedBox(height: 16),
+        Row(
+          children: [
+            Expanded(child: _StatCard(label: 'Risk Score', value: '$risk%')),
+            const SizedBox(width: 10),
+            Expanded(child: _StatCard(label: 'Movement Activity', value: '${movement.toStringAsFixed(0)}%')),
+          ],
+        ),
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            Expanded(
+              child: _StatCard(
+                label: 'Last Movement',
+                value: _formatDateTime(controller.lastTransmissionAt),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: _MiniTrendCard(value: movement / 100),
+            ),
+          ],
+        ),
+      ]);
+    } else {
+      for (final p in patients) {
+        final live = controller.liveStatusForPatient(p.id);
+        final severity = live?.severity ?? 'low';
+        final risk = ((live?.score ?? 0) * 100).round();
+        final statusText =
+            live?.lastMessage ?? 'No live data yet. Patient can sign in with generated credentials.';
+        final movement = (live?.fallProbability ?? 0) * 100;
+        final ageLabel = p.age == null ? 'Age not set' : '${p.age} years';
+        final updatedLabel = live != null
+            ? (live.locationUpdatedAt != null ? _formatDateTime(live.locationUpdatedAt) : 'live')
+            : 'offline';
+
+        children.addAll([
           _PatientHeroCard(
-            name: controller.patientName.isEmpty ? 'Monitored Patient' : controller.patientName,
-            age: controller.patientAge == null ? 'Age not set' : '${controller.patientAge} years',
+            name: p.fullName,
+            age: ageLabel,
             severity: severity,
-            lastUpdated: _formatDateTime(controller.lastTransmissionAt),
+            lastUpdated: updatedLabel,
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 8),
           _StatusBanner(
             color: _severityColor(severity),
-            title: _severityLabel(severity),
+            title: '${p.fullName} · ${_severityLabel(severity)}',
             message: statusText,
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 10),
           Row(
             children: [
               Expanded(child: _StatCard(label: 'Risk Score', value: '$risk%')),
               const SizedBox(width: 10),
-              Expanded(child: _StatCard(label: 'Movement Activity', value: '${movement.toStringAsFixed(0)}%')),
+              Expanded(child: _StatCard(label: 'Movement', value: '${movement.toStringAsFixed(0)}%')),
             ],
           ),
           const SizedBox(height: 10),
@@ -538,8 +676,8 @@ class CaregiverDashboard extends StatelessWidget {
             children: [
               Expanded(
                 child: _StatCard(
-                  label: 'Last Movement',
-                  value: _formatDateTime(controller.lastTransmissionAt),
+                  label: 'Stability',
+                  value: _stabilityText((live?.score ?? 0).clamp(0.0, 1.0)),
                 ),
               ),
               const SizedBox(width: 10),
@@ -549,27 +687,38 @@ class CaregiverDashboard extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 16),
-          Row(
-            children: [
-              Expanded(
-                child: FilledButton.icon(
-                  onPressed: () => controller.refreshCaregiverData(),
-                  icon: const Icon(Icons.visibility_outlined),
-                  label: const Text('View Details'),
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: FilledButton.icon(
-                  style: FilledButton.styleFrom(backgroundColor: const Color(0xFFC2453F)),
-                  onPressed: openAlerts,
-                  icon: const Icon(Icons.warning_amber_rounded),
-                  label: const Text('Emergency Actions'),
-                ),
-              ),
-            ],
+        ]);
+      }
+    }
+
+    children.addAll([
+      Row(
+        children: [
+          Expanded(
+            child: FilledButton.icon(
+              onPressed: () => controller.refreshCaregiverData(),
+              icon: const Icon(Icons.visibility_outlined),
+              label: const Text('Refresh'),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: FilledButton.icon(
+              style: FilledButton.styleFrom(backgroundColor: const Color(0xFFC2453F)),
+              onPressed: openAlerts,
+              icon: const Icon(Icons.warning_amber_rounded),
+              label: const Text('Emergency Actions'),
+            ),
           ),
         ],
+      ),
+    ]);
+
+    return RefreshIndicator(
+      onRefresh: () => controller.refreshCaregiverData(),
+      child: ListView(
+        padding: const EdgeInsets.all(16),
+        children: children,
       ),
     );
   }
