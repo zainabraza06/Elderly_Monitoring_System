@@ -89,6 +89,12 @@ class AdminLoginBody(BaseModel):
     password: str
 
 
+class PatientLocationBody(BaseModel):
+    latitude: float = Field(..., ge=-90, le=90)
+    longitude: float = Field(..., ge=-180, le=180)
+    accuracy_m: float | None = Field(default=None, ge=0)
+
+
 class PatientCreateBody(BaseModel):
     full_name: str
     age: int | None = None
@@ -812,6 +818,72 @@ def summary():
     }
 
 
+@router.post("/api/v1/patients/me/location")
+def post_my_location(
+    body: PatientLocationBody,
+    authorization: Annotated[str | None, Header()] = None,
+):
+    """Elder device shares GPS — stored on ``patient_live`` for caregiver map."""
+    claims = _need_role(_claims_opt(authorization), {"elder"})
+    elder_uid = str(claims["sub"])
+    init_schema()
+    now = iso_now()
+    with get_connection() as conn:
+        c = conn.cursor()
+        c.execute(
+            "SELECT id, full_name FROM patients WHERE elder_user_id = ?",
+            (elder_uid,),
+        )
+        row = c.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="No patient linked to this elder account")
+        pid = str(row["id"])
+        pname = str(row["full_name"])
+
+        c.execute("SELECT patient_id FROM patient_live WHERE patient_id = ?", (pid,))
+        if c.fetchone():
+            c.execute(
+                """UPDATE patient_live SET latitude=?, longitude=?, location_accuracy_m=?,
+                   location_updated_at=?, updated_at=? WHERE patient_id=?""",
+                (
+                    body.latitude,
+                    body.longitude,
+                    body.accuracy_m,
+                    now,
+                    now,
+                    pid,
+                ),
+            )
+        else:
+            c.execute(
+                """INSERT INTO patient_live (
+                    patient_id, patient_name, session_id, device_id,
+                    severity, score, fall_probability, predicted_activity_class,
+                    last_message, sample_rate_hz, active_alert_ids, updated_at,
+                    latitude, longitude, location_accuracy_m, location_updated_at
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    pid,
+                    pname,
+                    None,
+                    None,
+                    "low",
+                    0.0,
+                    0.0,
+                    None,
+                    "Location shared",
+                    None,
+                    "[]",
+                    now,
+                    body.latitude,
+                    body.longitude,
+                    body.accuracy_m,
+                    now,
+                ),
+            )
+    return {"ok": True, "patient_id": pid, "location_updated_at": now}
+
+
 @router.get("/api/v1/monitor/patients/live")
 def live_patients():
     init_schema()
@@ -843,6 +915,10 @@ def live_patients():
                 "sample_rate_hz": row["sample_rate_hz"],
                 "latest_metrics": {},
                 "active_alert_ids": aids,
+                "latitude": row["latitude"],
+                "longitude": row["longitude"],
+                "location_accuracy_m": row["location_accuracy_m"],
+                "location_updated_at": row["location_updated_at"],
             }
         )
     return out

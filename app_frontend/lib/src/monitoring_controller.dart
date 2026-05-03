@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_ringtone_player/flutter_ringtone_player.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import 'api_client.dart';
 import 'models.dart';
@@ -47,6 +48,7 @@ class MonitoringController extends ChangeNotifier {
   static const String _caregiverTokenKey = 'caregiver_token';
   static const String _caregiverNameKey = 'caregiver_name';
   static const String _caregiverEmailAuthKey = 'caregiver_email_auth';
+  static const String _elderAccessTokenKey = 'elder_access_token';
 
   final BackendApiClient _apiClient;
   final SensorStreamingService _sensorService;
@@ -106,6 +108,8 @@ class MonitoringController extends ChangeNotifier {
   String? _caregiverToken;
   String _caregiverName = '';
   String _caregiverAuthEmail = '';
+  String? _elderAccessToken;
+  DateTime? _lastLocationUploadAt;
   GeneratedPatientCredentialModel? _lastGeneratedCredential;
 
   bool get initialized => _initialized;
@@ -154,6 +158,9 @@ class MonitoringController extends ChangeNotifier {
   double? get homeLatitude => _homeLatitude;
   double? get homeLongitude => _homeLongitude;
   bool get hasHomeLocation => _homeLatitude != null && _homeLongitude != null;
+
+  bool get hasElderSession =>
+      _elderAccessToken != null && _elderAccessToken!.trim().isNotEmpty;
   bool get isCaregiverAuthenticated => _caregiverToken != null && _caregiverToken!.isNotEmpty;
   String get caregiverName => _caregiverName;
   String get caregiverAuthEmail => _caregiverAuthEmail;
@@ -184,10 +191,17 @@ class MonitoringController extends ChangeNotifier {
     _caregiverToken = _preferences?.getString(_caregiverTokenKey);
     _caregiverName = _preferences?.getString(_caregiverNameKey) ?? '';
     _caregiverAuthEmail = _preferences?.getString(_caregiverEmailAuthKey) ?? '';
+    _elderAccessToken = _preferences?.getString(_elderAccessTokenKey);
     _sessionId = null;
 
     _apiClient.updateBaseUrl(_backendUrl);
-    _apiClient.setBearerToken(_caregiverToken);
+    if (_caregiverToken != null && _caregiverToken!.isNotEmpty) {
+      _apiClient.setBearerToken(_caregiverToken);
+    } else if (_elderAccessToken != null && _elderAccessToken!.isNotEmpty) {
+      _apiClient.setBearerToken(_elderAccessToken);
+    } else {
+      _apiClient.setBearerToken(null);
+    }
 
     _statusMessage = hasSetup
         ? 'Saved setup loaded. Check the backend and start monitoring.'
@@ -217,6 +231,7 @@ class MonitoringController extends ChangeNotifier {
       _caregiverToken = auth.accessToken;
       _caregiverName = auth.caregiverName;
       _caregiverAuthEmail = auth.caregiverEmail;
+      await _clearElderAuth();
       await _persistCaregiverAuth();
       _apiClient.setBearerToken(_caregiverToken);
       _statusMessage = 'Caregiver account ready.';
@@ -244,6 +259,7 @@ class MonitoringController extends ChangeNotifier {
       _caregiverToken = auth.accessToken;
       _caregiverName = auth.caregiverName;
       _caregiverAuthEmail = auth.caregiverEmail;
+      await _clearElderAuth();
       await _persistCaregiverAuth();
       _apiClient.setBearerToken(_caregiverToken);
       _statusMessage = 'Welcome back $_caregiverName.';
@@ -263,12 +279,14 @@ class MonitoringController extends ChangeNotifier {
     String? displayName,
   }) async {
     _caregiverToken = null;
+    _elderAccessToken = accessToken;
     _apiClient.setBearerToken(accessToken);
     _patientId = patientId;
     if (displayName != null && displayName.isNotEmpty) {
       _patientName = displayName;
     }
     await _persistIdentifiers();
+    await _persistElderAuth();
     notifyListeners();
   }
 
@@ -376,6 +394,7 @@ class MonitoringController extends ChangeNotifier {
       (position) {
         _currentPosition = position;
         _locationError = null;
+        unawaited(_throttledUploadPatientLocation(position));
         notifyListeners();
       },
       onError: (error) {
@@ -386,10 +405,47 @@ class MonitoringController extends ChangeNotifier {
 
     try {
       _currentPosition ??= await Geolocator.getCurrentPosition();
+      if (_currentPosition != null) {
+        unawaited(_throttledUploadPatientLocation(_currentPosition!));
+      }
     } catch (error) {
       _locationError = error.toString();
     }
     notifyListeners();
+  }
+
+  Future<void> _throttledUploadPatientLocation(Position p) async {
+    final token = _elderAccessToken;
+    if (token == null || token.isEmpty) return;
+    final now = DateTime.now();
+    final last = _lastLocationUploadAt;
+    if (last != null && now.difference(last) < const Duration(seconds: 25)) {
+      return;
+    }
+    _lastLocationUploadAt = now;
+    try {
+      await _apiClient.postPatientLocation(
+        latitude: p.latitude,
+        longitude: p.longitude,
+        accuracyM: p.accuracy,
+        bearerToken: token,
+      );
+    } catch (_) {}
+  }
+
+  /// Opens Google Maps with walking directions from current GPS to saved home (external app/browser).
+  Future<void> openWalkingDirectionsHome() async {
+    final cur = _currentPosition;
+    final hLat = _homeLatitude;
+    final hLon = _homeLongitude;
+    if (cur == null || hLat == null || hLon == null) return;
+    final uri = Uri.parse(
+      'https://www.google.com/maps/dir/?api=1&origin=${cur.latitude},${cur.longitude}'
+      '&destination=$hLat,$hLon&travelmode=walking',
+    );
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    }
   }
 
   Future<void> stopLocationTracking() async {
@@ -1058,6 +1114,24 @@ class MonitoringController extends ChangeNotifier {
     await preferences.setString(_caregiverTokenKey, _caregiverToken!);
     await preferences.setString(_caregiverNameKey, _caregiverName);
     await preferences.setString(_caregiverEmailAuthKey, _caregiverAuthEmail);
+  }
+
+  Future<void> _persistElderAuth() async {
+    final preferences = _preferences ?? await SharedPreferences.getInstance();
+    _preferences = preferences;
+    if (_elderAccessToken == null || _elderAccessToken!.isEmpty) {
+      await preferences.remove(_elderAccessTokenKey);
+      return;
+    }
+    await preferences.setString(_elderAccessTokenKey, _elderAccessToken!);
+  }
+
+  Future<void> _clearElderAuth() async {
+    _elderAccessToken = null;
+    _lastLocationUploadAt = null;
+    final preferences = _preferences ?? await SharedPreferences.getInstance();
+    _preferences = preferences;
+    await preferences.remove(_elderAccessTokenKey);
   }
 
   void _ensureAutoRefresh() {

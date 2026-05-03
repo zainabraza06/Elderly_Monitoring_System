@@ -330,6 +330,10 @@ class LiveStatusModel {
     this.sampleRateHz,
     this.latestMetrics = const <String, double>{},
     this.activeAlertIds = const <String>[],
+    this.latitude,
+    this.longitude,
+    this.locationAccuracyM,
+    this.locationUpdatedAt,
   });
 
   final String patientId;
@@ -344,6 +348,14 @@ class LiveStatusModel {
   final double? sampleRateHz;
   final Map<String, double> latestMetrics;
   final List<String> activeAlertIds;
+  /// Last GPS point shared by the elder device (see POST `/patients/me/location`).
+  final double? latitude;
+  final double? longitude;
+  final double? locationAccuracyM;
+  final DateTime? locationUpdatedAt;
+
+  bool get hasLiveLocation =>
+      latitude != null && longitude != null;
 
   factory LiveStatusModel.fromJson(Map<String, dynamic> json) {
     final metricsJson =
@@ -364,6 +376,10 @@ class LiveStatusModel {
         (key, value) => MapEntry(key, (value as num).toDouble()),
       ),
       activeAlertIds: alertsJson.map((item) => item.toString()).toList(),
+      latitude: (json['latitude'] as num?)?.toDouble(),
+      longitude: (json['longitude'] as num?)?.toDouble(),
+      locationAccuracyM: (json['location_accuracy_m'] as num?)?.toDouble(),
+      locationUpdatedAt: DateTime.tryParse(json['location_updated_at'] as String? ?? ''),
     );
   }
 }

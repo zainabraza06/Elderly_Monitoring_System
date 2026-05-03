@@ -608,7 +608,14 @@ class LiveMonitoringScreen extends StatelessWidget {
         const SizedBox(height: 10),
         _StatCard(label: 'Alert Level', value: _severityLabel(severity)),
         const SizedBox(height: 16),
-        _LocationSection(controller: controller),
+        const Text('Elder locations', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 18)),
+        const SizedBox(height: 8),
+        const Text(
+          'Last GPS shared from each elder device (sign in as elder + enable location).',
+          style: TextStyle(color: Color(0xFF5D7385), fontSize: 13),
+        ),
+        const SizedBox(height: 12),
+        _CaregiverPatientsLocationMap(livePatients: controller.livePatients),
         const SizedBox(height: 16),
         const Text('Recent Timeline', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 18)),
         const SizedBox(height: 8),
@@ -1043,8 +1050,28 @@ class PatientModeHome extends StatelessWidget {
             ],
           ),
         ),
+        if (controller.hasElderSession) ...[
+          const SizedBox(height: 12),
+          _StatusBanner(
+            color: const Color(0xFF1B9B8B),
+            title: 'Where you are',
+            message: controller.locationTrackingEnabled
+                ? 'Your last position is shared with your caregiver when GPS updates.'
+                : 'Turn on location below to see the map, share your position, and get directions home.',
+          ),
+        ],
+        if (!controller.locationTrackingEnabled) ...[
+          const SizedBox(height: 12),
+          FilledButton.icon(
+            onPressed: () => controller.startLocationTracking(),
+            icon: const Icon(Icons.location_searching_outlined),
+            label: const Text('Enable location & map'),
+          ),
+        ],
         if (controller.currentPosition != null) ...[
           const SizedBox(height: 14),
+          const Text('Tracking map', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
+          const SizedBox(height: 8),
           _LocationMapCard(
             current: LatLng(controller.currentPosition!.latitude, controller.currentPosition!.longitude),
             home: controller.hasHomeLocation
@@ -1054,20 +1081,27 @@ class PatientModeHome extends StatelessWidget {
           ),
         ],
         if (controller.currentPosition != null && controller.hasHomeLocation) ...[
+          const SizedBox(height: 12),
+          FilledButton.icon(
+            onPressed: () => controller.openWalkingDirectionsHome(),
+            icon: const Icon(Icons.directions_walk),
+            label: const Text('Get directions home (Google Maps)'),
+          ),
           const SizedBox(height: 10),
           _StatusBanner(
             color: const Color(0xFF2A7DA8),
-            title: 'Direction Home',
+            title: 'Direction home',
             message:
-                '${_distanceKm(controller.currentPosition!.latitude, controller.currentPosition!.longitude, controller.homeLatitude!, controller.homeLongitude!).toStringAsFixed(2)} km away, head ${_bearingDirection(controller.currentPosition!.latitude, controller.currentPosition!.longitude, controller.homeLatitude!, controller.homeLongitude!)}.',
+                '${_distanceKm(controller.currentPosition!.latitude, controller.currentPosition!.longitude, controller.homeLatitude!, controller.homeLongitude!).toStringAsFixed(2)} km away — walk toward ${_bearingDirection(controller.currentPosition!.latitude, controller.currentPosition!.longitude, controller.homeLatitude!, controller.homeLongitude!)}.',
           ),
         ],
         if (controller.currentPosition == null || !controller.hasHomeLocation) ...[
           const SizedBox(height: 12),
           const _StatusBanner(
             color: Color(0xFF2A7DA8),
-            title: 'Location Guidance',
-            message: 'Ask your caregiver to set Home Location from the profile for navigation help.',
+            title: 'Home location',
+            message:
+                'Ask your caregiver to save “Home” from their phone while at your house (Settings → Home Location), or set it yourself if you have access.',
           ),
         ],
         const SizedBox(height: 18),
@@ -1393,57 +1427,110 @@ class _AlertCard extends StatelessWidget {
   }
 }
 
-class _LocationSection extends StatelessWidget {
-  const _LocationSection({required this.controller});
+class _CaregiverPatientsLocationMap extends StatelessWidget {
+  const _CaregiverPatientsLocationMap({required this.livePatients});
 
-  final MonitoringController controller;
+  final List<LiveStatusModel> livePatients;
 
   @override
   Widget build(BuildContext context) {
-    final current = controller.currentPosition;
-    if (!controller.locationTrackingEnabled) {
+    final withLoc = livePatients.where((p) => p.hasLiveLocation).toList();
+    if (withLoc.isEmpty) {
       return Container(
         padding: const EdgeInsets.all(14),
         decoration: _cardDecoration(),
-        child: Column(
+        child: const Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('Live Location', style: TextStyle(fontWeight: FontWeight.w700)),
-            const SizedBox(height: 8),
-            const Text('Location tracking is off.'),
-            const SizedBox(height: 8),
-            FilledButton.icon(
-              onPressed: controller.startLocationTracking,
-              icon: const Icon(Icons.location_searching_outlined),
-              label: const Text('Enable Tracking'),
+            Text('No positions yet', style: TextStyle(fontWeight: FontWeight.w700)),
+            SizedBox(height: 8),
+            Text(
+              'When an elder signs in on their phone, enables GPS, and walks outside, their last location appears here.',
+              style: TextStyle(color: Color(0xFF5D7385)),
             ),
           ],
         ),
       );
     }
 
-    if (current == null) {
-      return Container(
-        padding: const EdgeInsets.all(14),
-        decoration: _cardDecoration(),
-        child: const Text('Fetching live location...'),
-      );
+    final points = withLoc.map((p) => LatLng(p.latitude!, p.longitude!)).toList();
+    double sumLat = 0, sumLon = 0;
+    for (final q in points) {
+      sumLat += q.latitude;
+      sumLon += q.longitude;
     }
+    final n = points.length;
+    final center = LatLng(sumLat / n, sumLon / n);
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _LocationMapCard(
-          current: LatLng(current.latitude, current.longitude),
-          home: controller.hasHomeLocation ? LatLng(controller.homeLatitude!, controller.homeLongitude!) : null,
-          compact: false,
-        ),
-        const SizedBox(height: 8),
-        _StatCard(
-          label: 'Current Position',
-          value: '${current.latitude.toStringAsFixed(5)}, ${current.longitude.toStringAsFixed(5)}',
-        ),
-      ],
+    return Container(
+      height: 280,
+      clipBehavior: Clip.antiAlias,
+      decoration: _cardDecoration(),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: FlutterMap(
+              options: MapOptions(
+                initialCenter: center,
+                initialZoom: n == 1 ? 15 : 11,
+              ),
+              children: [
+                TileLayer(
+                  urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                  userAgentPackageName: 'com.example.newapp',
+                ),
+                MarkerLayer(
+                  markers: [
+                    for (final p in withLoc)
+                      Marker(
+                        point: LatLng(p.latitude!, p.longitude!),
+                        width: 160,
+                        height: 44,
+                        alignment: Alignment.bottomCenter,
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: BorderRadius.circular(8),
+                                boxShadow: const [
+                                  BoxShadow(color: Color(0x33000000), blurRadius: 4),
+                                ],
+                              ),
+                              child: Text(
+                                p.patientName,
+                                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            const Icon(Icons.location_on, color: Color(0xFF155A9B), size: 32),
+                          ],
+                        ),
+                      ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
+            child: Wrap(
+              spacing: 12,
+              runSpacing: 6,
+              children: [
+                for (final p in withLoc)
+                  Text(
+                    '${p.patientName}: ${p.latitude!.toStringAsFixed(4)}, ${p.longitude!.toStringAsFixed(4)}',
+                    style: const TextStyle(fontSize: 12, color: Color(0xFF4A5E70)),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

@@ -246,6 +246,29 @@ class BackendApiClient {
     );
   }
 
+  /// Elder role JWT — stores last GPS on the server for the caregiver map.
+  Future<void> postPatientLocation({
+    required double latitude,
+    required double longitude,
+    double? accuracyM,
+    required String bearerToken,
+  }) async {
+    await _send(
+      http.post(
+        _uri('/api/v1/patients/me/location'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $bearerToken',
+        },
+        body: jsonEncode({
+          'latitude': latitude,
+          'longitude': longitude,
+          if (accuracyM != null) 'accuracy_m': accuracyM,
+        }),
+      ),
+    );
+  }
+
   Future<SystemSummaryModel> getSummary() async {
     return SystemSummaryModel.fromJson(
       _asMap(await _send(http.get(_uri('/api/v1/summary'), headers: _headers()))),

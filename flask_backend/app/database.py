@@ -138,6 +138,22 @@ def init_schema() -> None:
             );
             """
         )
+        _migrate_schema(conn)
+
+
+def _migrate_schema(conn: sqlite3.Connection) -> None:
+    """Add columns on existing SQLite DBs (idempotent)."""
+    c = conn.cursor()
+    c.execute("PRAGMA table_info(patient_live)")
+    existing = {row[1] for row in c.fetchall()}
+    for col, decl in (
+        ("latitude", "REAL"),
+        ("longitude", "REAL"),
+        ("location_accuracy_m", "REAL"),
+        ("location_updated_at", "TEXT"),
+    ):
+        if col not in existing:
+            c.execute(f"ALTER TABLE patient_live ADD COLUMN {col} {decl}")
 
 
 def iso_now() -> str:
