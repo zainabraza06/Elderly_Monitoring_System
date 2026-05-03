@@ -7,6 +7,8 @@
     "ENV PYTHONUNBUFFERED=1",
     "COPY flask_backend/requirements.txt /tmp/requirements.txt",
     "RUN pip install --no-cache-dir -r /tmp/requirements.txt",
+    "COPY scripts/inference /app/scripts/inference",
+    "COPY scripts/baseline_falltype /app/scripts/baseline_falltype",
     "COPY flask_backend /app/flask_backend",
     "EXPOSE 8000",
     "CMD [\"uvicorn\", \"flask_backend.app.main:app\", \"--host\", \"0.0.0.0\", \"--port\", \"8000\"]"
