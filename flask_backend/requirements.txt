@@ -4,10 +4,13 @@ uvicorn[standard]>=0.27.0
 pydantic>=2.5.0
 pyjwt>=2.8.0
 bcrypt>=4.1.0
+
 numpy>=1.24.0
 scipy>=1.10.0
-# Match sklearn used when joblib artifacts were saved (avoids InconsistentVersionWarning / bad loads).
-scikit-learn>=1.6.1,<1.7.0
+
+# MUST match training version exactly
+scikit-learn==1.6.1
+
 joblib>=1.3.0
 xgboost>=2.0.0
 lightgbm>=4.0.0
