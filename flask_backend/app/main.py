@@ -18,10 +18,10 @@ import xgboost
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
-from flask_backend.app.database import init_schema, seed_default_admin
-from flask_backend.app.monitoring_routes import router as monitoring_router, set_inference_runtime
-from flask_backend.app.services.motion_xgb_service import InferenceArtifacts, load_artifacts
-from flask_backend.app.settings import inference_manifest_path, model_root
+from app.database import init_schema, seed_default_admin
+from app.monitoring_routes import router as monitoring_router, set_inference_runtime
+from app.services.motion_xgb_service import InferenceArtifacts, load_artifacts
+from app.settings import inference_manifest_path, model_root
 
 
 def _versions() -> dict[str, str]:

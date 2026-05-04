@@ -1,0 +1,25 @@
+# Render Blueprint: SafeStep AI FastAPI backend.
+# rootDir = flask_backend so `app` is the import root (see app/main.py).
+#
+# IMPORTANT: Do NOT use Render’s default `gunicorn app.main:app` without ASGI — use uvicorn as below.
+#
+# After deploy, set JWT_SECRET in the service Environment tab.
+
+services:
+  - type: web
+    name: safestep-backend
+    runtime: python
+    # free = 512 MB RAM; loading XGBoost + sklearn may need a paid plan (e.g. starter) or first deploy OOMs.
+    plan: starter
+    rootDir: flask_backend
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/v1/health
+    envVars:
+      - key: JWT_SECRET
+        generateValue: true
+      # Optional overrides (defaults resolve under flask_backend/models):
+      # - key: MODEL_ROOT
+      #   value: /opt/render/project/src/flask_backend/models
+      # - key: INFERENCE_MANIFEST
+      #   value: /opt/render/project/src/flask_backend/models/inference_manifest.json

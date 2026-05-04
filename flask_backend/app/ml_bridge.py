@@ -8,7 +8,7 @@ from typing import Any
 
 import numpy as np
 
-from flask_backend.app.settings import repo_root
+from app.settings import repo_root
 
 _WINDOW = 300
 

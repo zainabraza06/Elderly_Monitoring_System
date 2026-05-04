@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from flask_backend.app.settings import repo_root
+from app.settings import repo_root
 
 _lock = threading.Lock()
 _db_path: Path | None = None
@@ -166,7 +166,7 @@ def seed_default_admin() -> None:
     import os
     import uuid
 
-    from flask_backend.app.auth_jwt import hash_password
+    from app.auth_jwt import hash_password
 
     pwd = os.environ.get("ADMIN_PASSWORD", "admin123")
     email = os.environ.get("ADMIN_EMAIL", "admin@local")

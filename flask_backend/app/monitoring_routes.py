@@ -16,13 +16,13 @@ from fastapi import APIRouter, BackgroundTasks, Header, HTTPException, Query, We
 from starlette.websockets import WebSocketDisconnect
 from pydantic import BaseModel, Field
 
-from flask_backend.app.auth_jwt import create_token, decode_token, hash_password, verify_password
-from flask_backend.app.database import get_connection, init_schema, iso_now, seed_default_admin
-from flask_backend.app.detector_state import build_detection_payload
-from flask_backend.app.ml_bridge import acc_gyro_ori_to_window_lists, samples_to_feature_vector
-from flask_backend.app.schemas_fall_feedback import FallFeedbackAck, FallFeedbackEvent
-from flask_backend.app.schemas_motion import MotionInferenceRequest, MotionInferenceResponse
-from flask_backend.app.services.motion_xgb_service import InferenceArtifacts, run_inference
+from app.auth_jwt import create_token, decode_token, hash_password, verify_password
+from app.database import get_connection, init_schema, iso_now, seed_default_admin
+from app.detector_state import build_detection_payload
+from app.ml_bridge import acc_gyro_ori_to_window_lists, samples_to_feature_vector
+from app.schemas_fall_feedback import FallFeedbackAck, FallFeedbackEvent
+from app.schemas_motion import MotionInferenceRequest, MotionInferenceResponse
+from app.services.motion_xgb_service import InferenceArtifacts, run_inference
 
 RESPONSE_DEADLINE_SEC = int(os.environ.get("FALL_RESPONSE_DEADLINE_SEC", "30"))
 EMERGENCY_DEADLINE_SEC = int(os.environ.get("FALL_EMERGENCY_DEADLINE_SEC", "90"))
@@ -142,7 +142,7 @@ def _assert_manual_alert_authorized(body: Any, authorization: str | None) -> Non
 async def _broadcast_alert_ws(caregiver_id: str | None, payload: dict[str, Any]) -> None:
     if not caregiver_id:
         return
-    from flask_backend.app.realtime_hub import hub
+    from app.realtime_hub import hub
 
     await hub.broadcast_to_caregiver(caregiver_id, payload)
 
@@ -1290,7 +1290,7 @@ def admin_delete_patient(patient_id: str, authorization: Annotated[str | None, H
 
 @router.post("/api/v1/events/fall-feedback")
 def fall_feedback_db(body: FallFeedbackEvent):
-    from flask_backend.app.settings import repo_root as _repo_root
+    from app.settings import repo_root as _repo_root
 
     _persist_feedback_db(body)
     log_dir = _repo_root() / "data" / "feedback"
@@ -1315,7 +1315,7 @@ async def caregiver_alerts_ws(websocket: WebSocket, token: str = Query(..., min_
         await websocket.close(code=4403)
         return
     cid = str(claims["sub"])
-    from flask_backend.app.realtime_hub import hub
+    from app.realtime_hub import hub
 
     await hub.register(cid, websocket)
     try:
