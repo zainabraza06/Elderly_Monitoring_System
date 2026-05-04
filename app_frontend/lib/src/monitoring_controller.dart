@@ -9,6 +9,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
+import 'api_config.dart';
 import 'api_client.dart';
 import 'models.dart';
 import 'motion_inference_helper.dart';
@@ -26,19 +27,8 @@ class MonitoringController extends ChangeNotifier {
               stepSize: offlineWindowStepSamples,
             );
 
-  /// [10.0.2.2] is the Android **emulator** alias for the host machine.
-  /// Flutter **Web** (Chrome) and iOS simulator run on the host OS — use [localhost].
-  static String get defaultBackendUrl {
-    if (kIsWeb) {
-      return 'http://localhost:8000';
-    }
-    switch (defaultTargetPlatform) {
-      case TargetPlatform.android:
-        return 'http://10.0.2.2:8000';
-      default:
-        return 'http://localhost:8000';
-    }
-  }
+  /// Default REST/WebSocket base URL (see [AppApiConfig.backendBaseUrl]).
+  static String get defaultBackendUrl => AppApiConfig.backendBaseUrl;
   static const String defaultDeviceLabel = 'Caregiver Phone';
   static const String elderDeviceLabel = 'Patient phone';
   static const double defaultSampleRateHz = 50.0;

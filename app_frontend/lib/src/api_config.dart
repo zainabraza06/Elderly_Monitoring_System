@@ -1,9 +1,8 @@
 class AppApiConfig {
   AppApiConfig._();
 
-  // Change this once to point the app to a different backend host.
-  static const String backendBaseUrl =
-      'https://detection-backend.app.zeeshan-abbas.tech/';
+  // Production backend (Render). Override in-app via setup if you need a local server.
+  static const String backendBaseUrl = 'https://safestep-ai.onrender.com';
 
   // Shared API prefix used for all backend REST calls.
   static const String apiPrefix = '/api/v1';

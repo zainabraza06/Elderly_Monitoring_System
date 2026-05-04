@@ -1,0 +1,2 @@
+# Used when Render root directory is flask_backend. Bind 0.0.0.0:$PORT (not uvicorn defaults 127.0.0.1:8000).
+web: uvicorn app.main:app --host 0.0.0.0 --port $PORT

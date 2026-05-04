@@ -13,8 +13,8 @@ services:
     plan: starter
     rootDir: flask_backend
     buildCommand: pip install --upgrade pip && pip install -r requirements.txt
-    # Use run.py so PORT is read in-process (avoids shell/$PORT mismatches vs uvicorn default 8000).
-    startCommand: python run.py
+    # Bare `uvicorn app.main:app` binds 127.0.0.1:8000 → Render port scan fails. Must use 0.0.0.0 and $PORT.
+    startCommand: sh -c "exec uvicorn app.main:app --host 0.0.0.0 --port $PORT"
     healthCheckPath: /api/v1/health
     envVars:
       - key: JWT_SECRET
