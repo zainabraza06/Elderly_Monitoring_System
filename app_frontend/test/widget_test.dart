@@ -1,7 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'package:newapp/src/app.dart';
+import 'package:safestep_ai/src/app.dart';
 
 void main() {
   testWidgets('renders the monitoring app shell', (WidgetTester tester) async {

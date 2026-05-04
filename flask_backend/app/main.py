@@ -1,4 +1,4 @@
-"""FastAPI: SisFall / elderly monitoring — full REST + ML inference."""
+"""FastAPI: SafeStep AI elderly monitoring — full REST + ML inference."""
 
 from __future__ import annotations
 
@@ -44,7 +44,7 @@ async def lifespan(_app: FastAPI):
     yield
 
 
-app = FastAPI(title="SisFall Elder Monitoring", version="2.0.0", lifespan=lifespan)
+app = FastAPI(title="SafeStep AI API", version="2.0.0", lifespan=lifespan)
 app.include_router(monitoring_router)
 app.add_middleware(
     CORSMiddleware,
@@ -70,7 +70,7 @@ def health():
         "inference_ready": _state.get("art") is not None,
         "load_error": _state.get("load_error"),
         "versions": _versions(),
-        "product": "SisFall_dataset_monitoring",
+        "product": "safestep_ai_monitoring",
     }
 
 

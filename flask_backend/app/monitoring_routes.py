@@ -1132,14 +1132,14 @@ def admin_dashboard(authorization: Annotated[str | None, Header()] = None):
         c.execute("SELECT COUNT(*) FROM app_events WHERE event_type='fall_feedback'")
         nf = c.fetchone()[0]
     return {
-        "schema": "sisfall_monitoring_v1",
+        "schema": "safestep_ai_monitoring_v1",
         "caretakers": nc,
         "elders_registered": ne,
         "patients": np,
         "open_alerts": oa,
         "fall_feedback_events": nf,
-        "datasets": ["SisFall", "MobiAct"],
-        "note": "Train scripts under scripts/; SisFall loader: scripts/sisfall/",
+        "datasets": ["MobiAct"],
+        "note": "SafeStep AI — models trained MobiAct-style (scripts/baseline_*).",
     }
 
 

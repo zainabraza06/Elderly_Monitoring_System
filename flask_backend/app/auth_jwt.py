@@ -9,7 +9,7 @@ from typing import Any
 import bcrypt
 import jwt
 
-SECRET = os.environ.get("JWT_SECRET", "sisfall-dev-change-me-in-production")
+SECRET = os.environ.get("JWT_SECRET", "safestep-ai-dev-change-me-in-production")
 ALGO = "HS256"
 TTL_DAYS = 7
 

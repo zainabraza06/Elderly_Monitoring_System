@@ -1,4 +1,4 @@
-"""Convert ingest samples → 116-D features + 300×3 windows (SisFall / MobiAct training parity)."""
+"""Convert ingest samples → 116-D features + 300×3 windows (MobiAct-style training parity)."""
 
 from __future__ import annotations
 

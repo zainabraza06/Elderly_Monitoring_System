@@ -1,4 +1,4 @@
-# SisFall / MobiAct — system architecture
+# SafeStep AI — system architecture
 
 This document ties together **training** (`scripts/`), **frozen weights** (`models/`), **evaluation outputs** (`results/`), **real-time inference** (backend + Flutter), and the **product surfaces** (caretaker / elder / admin).
 

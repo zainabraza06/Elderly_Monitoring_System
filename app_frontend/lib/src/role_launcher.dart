@@ -42,7 +42,7 @@ class _RoleLauncherState extends State<RoleLauncher> {
         return AdminDashboardScreen(onBack: () => setState(() => _pick = _LaunchPick.choose));
       case _LaunchPick.choose:
         return Scaffold(
-          appBar: AppBar(title: const Text('SisFall Monitor')),
+          appBar: AppBar(title: const Text('SafeStep AI')),
           body: SafeArea(
             child: Padding(
               padding: const EdgeInsets.all(24),

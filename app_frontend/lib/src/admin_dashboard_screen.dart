@@ -291,7 +291,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     return Scaffold(
       appBar: AppBar(
         leading: IconButton(icon: const Icon(Icons.arrow_back), onPressed: widget.onBack),
-        title: const Text('Admin — SisFall'),
+        title: const Text('Admin — SafeStep AI'),
         actions: [
           if (_client != null)
             IconButton(

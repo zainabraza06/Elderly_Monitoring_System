@@ -1,6 +1,6 @@
 {
-    "name": "newapp",
-    "short_name": "newapp",
+    "name": "SafeStep AI",
+    "short_name": "SafeStep AI",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",

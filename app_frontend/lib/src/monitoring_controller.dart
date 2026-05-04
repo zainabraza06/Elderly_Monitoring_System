@@ -26,7 +26,19 @@ class MonitoringController extends ChangeNotifier {
               stepSize: offlineWindowStepSamples,
             );
 
-  static const String defaultBackendUrl = 'http://10.0.2.2:8000';
+  /// [10.0.2.2] is the Android **emulator** alias for the host machine.
+  /// Flutter **Web** (Chrome) and iOS simulator run on the host OS — use [localhost].
+  static String get defaultBackendUrl {
+    if (kIsWeb) {
+      return 'http://localhost:8000';
+    }
+    switch (defaultTargetPlatform) {
+      case TargetPlatform.android:
+        return 'http://10.0.2.2:8000';
+      default:
+        return 'http://localhost:8000';
+    }
+  }
   static const String defaultDeviceLabel = 'Caregiver Phone';
   static const String elderDeviceLabel = 'Patient phone';
   static const double defaultSampleRateHz = 50.0;

@@ -42,7 +42,7 @@ class _ElderlyMonitorAppState extends State<ElderlyMonitorApp> {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'SisFall Care Monitor',
+      title: 'SafeStep AI',
       theme: ThemeData(
         useMaterial3: true,
         scaffoldBackgroundColor: const Color(0xFFF5F7FA),
@@ -1016,11 +1016,17 @@ class SettingsScreen extends StatelessWidget {
         const SizedBox(height: 16),
         Container(
           decoration: _cardDecoration(),
-          child: SwitchListTile(
-            title: const Text('Alarm for severe alerts'),
-            subtitle: const Text('Play an in-app sound when a serious alert needs attention'),
-            value: controller.alertViaAlarm,
-            onChanged: (v) => controller.setAlertViaAlarm(v),
+          clipBehavior: Clip.antiAlias,
+          child: Material(
+            color: Colors.transparent,
+            borderRadius: BorderRadius.circular(16),
+            clipBehavior: Clip.antiAlias,
+            child: SwitchListTile(
+              title: const Text('Alarm for severe alerts'),
+              subtitle: const Text('Play an in-app sound when a serious alert needs attention'),
+              value: controller.alertViaAlarm,
+              onChanged: (v) => controller.setAlertViaAlarm(v),
+            ),
           ),
         ),
         const SizedBox(height: 24),
@@ -1078,9 +1084,11 @@ class _PatientModeHomeState extends State<PatientModeHome> {
         final pos = c.currentPosition;
         final heading = pos != null && pos.heading >= 0 && pos.heading <= 360 ? pos.heading : null;
 
-        return ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
+        return Material(
+          color: Theme.of(context).scaffoldBackgroundColor,
+          child: ListView(
+            padding: const EdgeInsets.all(16),
+            children: [
             Container(
               padding: const EdgeInsets.all(18),
               decoration: BoxDecoration(
@@ -1221,6 +1229,7 @@ class _PatientModeHomeState extends State<PatientModeHome> {
               ),
             ],
           ],
+          ),
         );
       },
     );
@@ -1566,7 +1575,7 @@ class CaregiverPatientsLocationMap extends StatelessWidget {
               children: [
                 TileLayer(
                   urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                  userAgentPackageName: 'com.example.newapp',
+                  userAgentPackageName: 'ai.safestep.app',
                 ),
                 MarkerLayer(
                   markers: [
@@ -1663,7 +1672,7 @@ class _LocationMapCard extends StatelessWidget {
         children: [
           TileLayer(
             urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-            userAgentPackageName: 'com.example.newapp',
+            userAgentPackageName: 'ai.safestep.app',
           ),
           if (points.length == 2)
             PolylineLayer(
