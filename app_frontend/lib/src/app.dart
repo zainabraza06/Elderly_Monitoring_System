@@ -1583,13 +1583,15 @@ class CaregiverPatientsLocationMap extends StatelessWidget {
                       Marker(
                         point: LatLng(p.latitude!, p.longitude!),
                         width: 160,
-                        height: 52,
+                        // Label chip + map icon; 52 was too small and caused Column overflow.
+                        height: 88,
                         alignment: Alignment.bottomCenter,
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             Container(
                               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                              constraints: const BoxConstraints(maxWidth: 160),
                               decoration: BoxDecoration(
                                 color: Colors.white,
                                 borderRadius: BorderRadius.circular(8),
@@ -1599,6 +1601,7 @@ class CaregiverPatientsLocationMap extends StatelessWidget {
                               ),
                               child: Text(
                                 p.patientName,
+                                maxLines: 1,
                                 style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
                                 overflow: TextOverflow.ellipsis,
                               ),
