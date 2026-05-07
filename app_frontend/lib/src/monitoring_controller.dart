@@ -1148,6 +1148,7 @@ class MonitoringController extends ChangeNotifier {
             '${response.detection.message} · ${motion.summaryLine}';
       } catch (_) {
         // Optional stack: `/api/v1/inference/motion` returns 503 when models are missing.
+        _statusMessage = response.detection.message;
       }
 
       if (response.activeAlert != null) {
@@ -1156,7 +1157,6 @@ class MonitoringController extends ChangeNotifier {
         _activeAlert = null;
       }
 
-      _statusMessage = response.detection.message;
       unawaited(refreshCaregiverData(silent: true));
     } catch (error) {
       if (!_isStreaming || _sessionId != currentSessionId) {

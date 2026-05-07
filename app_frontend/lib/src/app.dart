@@ -650,7 +650,9 @@ class CaregiverDashboard extends StatelessWidget {
     final fallback = controller.liveStatus;
     final overviewLive = worst ?? (patients.length <= 1 ? fallback : null);
     final overviewSeverity = overviewLive?.severity ?? 'low';
-    final overviewText = overviewLive?.lastMessage ??
+    final overviewText = overviewLive != null
+        ? _liveMessageWithActivity(overviewLive)
+        :
         (patients.isEmpty
             ? 'Enroll one patient from the Enrollment tab. They sign in on their own device.'
             : 'When your patient signs in on their device, live status appears here.');
@@ -673,8 +675,12 @@ class CaregiverDashboard extends StatelessWidget {
       final live = controller.liveStatus;
       final severity = live?.severity ?? 'low';
       final risk = ((live?.score ?? controller.lastDetection?.score ?? 0) * 100).round();
-      final statusText = live?.lastMessage ?? 'No live data yet.';
+      final statusText = live != null ? _liveMessageWithActivity(live) : 'No live data yet.';
       final movement = (controller.lastDetection?.fallProbability ?? live?.fallProbability ?? 0) * 100;
+      final currentActivity = _currentActivityLabel(
+        live: live,
+        motion: controller.lastMotionInference,
+      );
       children.addAll([
         _PatientHeroCard(
           name: controller.patientName.isEmpty ? 'No patient linked' : controller.patientName,
@@ -688,6 +694,8 @@ class CaregiverDashboard extends StatelessWidget {
           title: _severityLabel(severity),
           message: statusText,
         ),
+        const SizedBox(height: 10),
+        _AnimatedActivityCard(activityLabel: currentActivity),
         const SizedBox(height: 16),
         Row(
           children: [
@@ -717,9 +725,14 @@ class CaregiverDashboard extends StatelessWidget {
         final live = controller.liveStatusForPatient(p.id);
         final severity = live?.severity ?? 'low';
         final risk = ((live?.score ?? 0) * 100).round();
-        final statusText =
-            live?.lastMessage ?? 'No live data yet. Patient can sign in with generated credentials.';
+        final statusText = live != null
+            ? _liveMessageWithActivity(live)
+            : 'No live data yet. Patient can sign in with generated credentials.';
         final movement = (live?.fallProbability ?? 0) * 100;
+        final currentActivity = _currentActivityLabel(
+          live: live,
+          motion: controller.lastMotionInference,
+        );
         final ageLabel = p.age == null ? 'Age not set' : '${p.age} years';
         final updatedLabel = live != null
             ? (live.locationUpdatedAt != null ? _formatDateTime(live.locationUpdatedAt) : 'live')
@@ -738,6 +751,8 @@ class CaregiverDashboard extends StatelessWidget {
             title: '${p.fullName} · ${_severityLabel(severity)}',
             message: statusText,
           ),
+          const SizedBox(height: 10),
+          _AnimatedActivityCard(activityLabel: currentActivity),
           const SizedBox(height: 10),
           Row(
             children: [
@@ -838,6 +853,10 @@ class LiveMonitoringScreen extends StatelessWidget {
     final fallValue = (live?.fallProbability ?? controller.lastDetection?.fallProbability ?? 0)
         .clamp(0.0, 1.0)
         .toDouble();
+    final currentActivity = _currentActivityLabel(
+      live: live,
+      motion: controller.lastMotionInference,
+    );
 
     return ListView(
       padding: const EdgeInsets.all(16),
@@ -845,12 +864,14 @@ class LiveMonitoringScreen extends StatelessWidget {
         _StatusBanner(
           color: _severityColor(severity),
           title: 'Live Status: ${_severityLabel(severity)}',
-          message: live?.lastMessage ?? 'Monitoring active.',
+          message: live != null ? _liveMessageWithActivity(live) : 'Monitoring active.',
         ),
         const SizedBox(height: 16),
         const _WavePulseCard(),
         const SizedBox(height: 16),
         _CircularRiskMeter(label: 'Risk Level', value: riskValue),
+        const SizedBox(height: 12),
+        _AnimatedActivityCard(activityLabel: currentActivity),
         const SizedBox(height: 16),
         _StatCard(label: 'Movement Intensity', value: '${(fallValue * 100).toStringAsFixed(0)}%'),
         const SizedBox(height: 10),
@@ -862,7 +883,10 @@ class LiveMonitoringScreen extends StatelessWidget {
         const SizedBox(height: 8),
         _TimelineItem(label: _formatDateTime(DateTime.now().subtract(const Duration(minutes: 1))), text: 'Monitoring active'),
         _TimelineItem(label: _formatDateTime(controller.lastTransmissionAt), text: 'Latest movement analyzed'),
-        _TimelineItem(label: _formatDateTime(DateTime.now()), text: live?.lastMessage ?? 'No abnormal movement'),
+        _TimelineItem(
+          label: _formatDateTime(DateTime.now()),
+          text: live != null ? _liveMessageWithActivity(live) : 'No abnormal movement',
+        ),
       ],
     );
   }
@@ -1081,6 +1105,15 @@ class _PatientModeHomeState extends State<PatientModeHome> {
       builder: (context, _) {
         final c = widget.controller;
         final severity = c.liveStatus?.severity ?? 'low';
+        final live = c.liveStatus;
+        final riskValue = (live?.score ?? c.lastDetection?.score ?? 0).clamp(0.0, 1.0).toDouble();
+        final movementValue = (live?.fallProbability ?? c.lastDetection?.fallProbability ?? 0)
+            .clamp(0.0, 1.0)
+            .toDouble();
+        final currentActivity = _currentActivityLabel(
+          live: live,
+          motion: c.lastMotionInference,
+        );
         final pos = c.currentPosition;
         final heading = pos != null && pos.heading >= 0 && pos.heading <= 360 ? pos.heading : null;
 
@@ -1107,6 +1140,39 @@ class _PatientModeHomeState extends State<PatientModeHome> {
                   ),
                 ],
               ),
+            ),
+            const SizedBox(height: 14),
+            _StatusBanner(
+              color: _severityColor(severity),
+              title: 'Live status: ${_severityLabel(severity)}',
+              message: c.liveStatus != null ? _liveMessageWithActivity(c.liveStatus!) : c.statusMessage,
+            ),
+            const SizedBox(height: 10),
+            _AnimatedActivityCard(activityLabel: currentActivity),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Expanded(
+                  child: _StatCard(
+                    label: 'Risk Level',
+                    value: '${(riskValue * 100).toStringAsFixed(0)}%',
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: _StatCard(
+                    label: 'Movement Intensity',
+                    value: '${(movementValue * 100).toStringAsFixed(0)}%',
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            _StatCard(
+              label: 'Latest Analysis',
+              value: c.lastMotionInference?.summaryLine ??
+                  c.liveStatus?.lastMessage ??
+                  'No analysis yet. Start active protection to stream sensor data.',
             ),
             const SizedBox(height: 14),
             SwitchListTile(
@@ -1743,6 +1809,67 @@ class _SimpleBarGraph extends StatelessWidget {
   }
 }
 
+class _AnimatedActivityCard extends StatelessWidget {
+  const _AnimatedActivityCard({required this.activityLabel});
+
+  final String activityLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    return TweenAnimationBuilder<double>(
+      key: ValueKey<String>(activityLabel),
+      tween: Tween<double>(begin: 0.96, end: 1.0),
+      duration: const Duration(milliseconds: 380),
+      curve: Curves.easeOutBack,
+      builder: (context, scale, child) {
+        return Transform.scale(scale: scale, child: child);
+      },
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 260),
+        curve: Curves.easeInOut,
+        padding: const EdgeInsets.all(14),
+        decoration: _cardDecoration().copyWith(
+          border: Border.all(color: const Color(0x332A7DA8)),
+        ),
+        child: Row(
+          children: [
+            TweenAnimationBuilder<double>(
+              tween: Tween<double>(begin: 0.70, end: 1.0),
+              duration: const Duration(milliseconds: 700),
+              curve: Curves.easeOut,
+              builder: (context, opacity, iconChild) {
+                return Opacity(opacity: opacity, child: iconChild);
+              },
+              child: const Icon(Icons.directions_walk_rounded, color: Color(0xFF2A7DA8)),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 260),
+                transitionBuilder: (child, anim) {
+                  return FadeTransition(
+                    opacity: anim,
+                    child: SizeTransition(
+                      sizeFactor: anim,
+                      axis: Axis.vertical,
+                      child: child,
+                    ),
+                  );
+                },
+                child: Text(
+                  'Current Activity: $activityLabel',
+                  key: ValueKey<String>(activityLabel),
+                  style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 BoxDecoration _cardDecoration() {
   return BoxDecoration(
     color: Colors.white,
@@ -1802,6 +1929,44 @@ String _stabilityText(double riskValue) {
   if (riskValue > 0.75) return 'Unstable';
   if (riskValue > 0.45) return 'Observe closely';
   return 'Stable';
+}
+
+String _liveMessageWithActivity(LiveStatusModel live) {
+  final base = live.lastMessage.trim().isEmpty ? 'Monitoring active.' : live.lastMessage.trim();
+  final activity = live.predictedActivityClass?.trim();
+  if (activity == null || activity.isEmpty) {
+    return base;
+  }
+  final lowerBase = base.toLowerCase();
+  final lowerActivity = activity.toLowerCase();
+  if (lowerBase.contains(lowerActivity)) {
+    return base;
+  }
+  return '$base Activity: $activity';
+}
+
+String _currentActivityLabel({
+  required LiveStatusModel? live,
+  required MotionInferenceResponseModel? motion,
+}) {
+  final fromLive = live?.predictedActivityClass?.trim();
+  if (fromLive != null && fromLive.isNotEmpty) {
+    return fromLive;
+  }
+  if (motion != null) {
+    if (motion.isFall) {
+      final fallType = motion.fallTypeLabel?.trim() ?? motion.fallTypeCode?.trim();
+      if (fallType != null && fallType.isNotEmpty) {
+        return 'Fall ($fallType)';
+      }
+      return 'Fall';
+    }
+    final adl = motion.activityLabel?.trim();
+    if (adl != null && adl.isNotEmpty) {
+      return adl;
+    }
+  }
+  return 'No movement class yet';
 }
 
 double _distanceKm(double lat1, double lon1, double lat2, double lon2) {
